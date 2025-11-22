@@ -1,4 +1,4 @@
-#include "gaussian.h"
+#include "gaussian.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -78,11 +78,11 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
                 gaussian.xyz[1] = value;
             }else if(propName == "z"){
                 gaussian.xyz[2] = value;
-            }else if(propName == "scale_x"){
+            }else if(propName == "scale_0"){
                 gaussian.scale[0] = value;
-            }else if(propName == "scale_y"){
+            }else if(propName == "scale_1"){
                 gaussian.scale[1] = value;
-            }else if(propName == "scale_z"){
+            }else if(propName == "scale_2"){
                 gaussian.scale[2] = value;
             }else if(propName == "rot_0"){
                 gaussian.rotation[0] = value;
@@ -106,10 +106,12 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
                 gaussian.f_dc[1] = value;
             }else if(propName == "f_dc_2"){
                 gaussian.f_dc[2] = value;
-            }else if(propName.find("f_rest_") != std::string::npos){
-                gaussian.f_rest.push_back(value);
+            }else if(propName.rfind("f_rest_", 0) == 0){
+                int idx = std::stoi(propName.substr(7));
+                gaussian.f_rest[idx] = value;
             }
         }
+        gaussian.color = Eigen::Vector3f(0.0f, 0.0f, 0.0f); // Initialize color
         group.gaussians.push_back(gaussian);
     }
 
