@@ -78,18 +78,22 @@ int main(){
         Gaussian3D &g = group.gaussians[i];
         Eigen::Matrix3f R;
         // convert quaternion to rotation matrix
-        float qx = g.rotation[0];
-        float qy = g.rotation[1];
-        float qz = g.rotation[2];
-        float qw = g.rotation[3];  
+        Eigen::Vector<float, 4> Rot;
+        Rot << g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3];
+        Rot.normalize();
+        float qw = Rot[0];  
+        float qx = Rot[1];  
+        float qy = Rot[2];  
+        float qz = Rot[3];
+        std::cout << qw << ", " << qx << ", " << qy << ", " << qz << std::endl;
         R << 1 - 2*qy*qy - 2*qz*qz, 2*qx*qy - 2*qz*qw, 2*qx*qz + 2*qy*qw,
              2*qx*qy + 2*qz*qw, 1 - 2*qx*qx - 2*qz*qz, 2*qy*qz - 2*qx*qw,
              2*qx*qz - 2*qy*qw, 2*qy*qz + 2*qx*qw, 1 - 2*qx*qx - 2*qy*qy;
         
         Eigen::Matrix3f S;
-        S << g.scale[0], 0.0f, 0.0f,
-              0.0f, g.scale[1], 0.0f,
-              0.0f, 0.0f, g.scale[2];
+        S << std::exp(g.scale[0]), 0.0f, 0.0f,
+              0.0f, std::exp(g.scale[1]), 0.0f,
+              0.0f, 0.0f, std::exp(g.scale[2]);
         Eigen::Matrix3f M;
         M = R * S;
         Eigen::Matrix3f covariance3D = M * M.transpose();
@@ -122,9 +126,7 @@ int main(){
         // get related tiles
         std::array<float, 2> rect_min;
         std::array<float, 2> rect_max;
-        std::cout << covariance2D << std::endl;
-        std::cout << "Gaussian " << i << " screen coord: (" << g.screen_coord[0] << ", " << g.screen_coord[1] << "), radius: " << radius << std::endl;
-	    getRelatedTiles(g.screen_coord, radius, rect_min, rect_max, grid);
+        getRelatedTiles(g.screen_coord, radius, rect_min, rect_max, grid);
         if ((rect_max[0] - rect_min[0]) * (rect_max[1] - rect_min[1]) == 0)
 		    continue; // Gaussian does not contribute to the image, skip
 

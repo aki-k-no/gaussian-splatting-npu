@@ -78,6 +78,7 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
                 gaussian.xyz[1] = value;
             }else if(propName == "z"){
                 gaussian.xyz[2] = value;
+            //note that these scalings are log-based
             }else if(propName == "scale_0"){
                 gaussian.scale[0] = value;
             }else if(propName == "scale_1"){
