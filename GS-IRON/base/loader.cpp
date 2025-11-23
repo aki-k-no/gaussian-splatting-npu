@@ -61,7 +61,9 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
 
 
         Gaussian3D gaussian;
-        for(size_t j=0;j<propertyNames.size();j++){
+        for(size_t j=0;j<propertyNames.size() ;j++){
+
+           
             const std::string &propName = propertyNames[j];
             const std::string &propType = propertyTypes[j];
             float value;
@@ -70,7 +72,6 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }else{
                 throw std::runtime_error("Unsupported property type: " + propType);
             }
-
             // set property to gaussian
             if(propName == "x"){
                 gaussian.xyz[0] = value;
@@ -100,7 +101,7 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }else if(propName == "nz"){
                 gaussian.normalxyz[2] = value;
             }else if(propName == "opacity"){
-                gaussian.opacity = value;
+                gaussian.opacity = 1 / (1 + std::exp(-value)); //sigmoid
             }else if(propName == "f_dc_0"){
                 gaussian.f_dc[0] = value;
             }else if(propName == "f_dc_1"){
@@ -115,7 +116,7 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
         gaussian.color = Eigen::Vector3f(0.0f, 0.0f, 0.0f); // Initialize color
         group.gaussians.push_back(gaussian);
     }
-
+    
 
     return group;
 }

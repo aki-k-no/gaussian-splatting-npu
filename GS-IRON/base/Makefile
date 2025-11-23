@@ -2,6 +2,12 @@
 CC = g++
 CFLAGS = -Wall -O2
 
+#include paths
+INCLUDES = -I/usr/include/eigen3 -I/usr/include/opencv4
+
+# linker flags
+LD_LIBS = `pkg-config --cflags --libs opencv4`
+
 # source and object files
 SRCS = $(wildcard *.cpp)
 OBJS = $(SRCS:.cpp=.o)
@@ -13,10 +19,10 @@ TARGET = base
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^ $(LD_LIBS)
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+%.o: %.cpp
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 run:
 	./$(TARGET)

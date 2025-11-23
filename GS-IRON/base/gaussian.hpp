@@ -3,8 +3,7 @@
 #include <array>
 #include <vector>
 #include <cstdint>
-#include <eigen3/Eigen/Dense>
-
+#include <Eigen/Dense>
 // Structure representing a single 3D Gaussian for splatting
 struct Gaussian3D {
     Eigen::Vector3f xyz;           // x, y, z coordinates
@@ -16,7 +15,8 @@ struct Gaussian3D {
     std::array<float, 45> f_rest;  // Rest DC
     Eigen::Vector3f xyz_view;      // xyz in view space
     std::array<float, 2> screen_coord; // screen coordinates
-    Eigen::Vector3f color;      // RGB color
+    Eigen::Vector3f color;         // RGB color
+    Eigen::Matrix2f inv_cov_2d;    // Inverse of 2D covariance matrix
 };
 
 // Container for loaded Gaussians

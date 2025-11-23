@@ -1,5 +1,5 @@
 #include "util.hpp"
-#include <eigen3/Eigen/Dense>
+#include <Eigen/Dense>
 #include <array>
 #include "const.hpp"
 #include <algorithm>

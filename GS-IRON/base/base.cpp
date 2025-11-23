@@ -6,7 +6,7 @@
 
 #include "loader.hpp"
 #include "camera.hpp"
-#include "eigen3/Eigen/Dense"
+#include <Eigen/Dense>
 #include "const.hpp"
 #include "util.hpp"
 #include "tile.hpp"
@@ -16,8 +16,9 @@
 #include <vector>
 #include <array>
 
+#include "opencv2/opencv.hpp"
 
-#define NUM_COEFF 16
+#define NUM_COEFF 15
 #define antialiasing true
 
 int main(){
@@ -85,7 +86,6 @@ int main(){
         float qx = Rot[1];  
         float qy = Rot[2];  
         float qz = Rot[3];
-        std::cout << qw << ", " << qx << ", " << qy << ", " << qz << std::endl;
         R << 1 - 2*qy*qy - 2*qz*qz, 2*qx*qy - 2*qz*qw, 2*qx*qz + 2*qy*qw,
              2*qx*qy + 2*qz*qw, 1 - 2*qx*qx - 2*qz*qz, 2*qy*qz - 2*qx*qw,
              2*qx*qz - 2*qy*qw, 2*qy*qz + 2*qx*qw, 1 - 2*qx*qx - 2*qy*qy;
@@ -114,7 +114,10 @@ int main(){
 	    	h_convolution_scaling = std::sqrt(std::max(0.000025f, det_cov2D / det_cov_plus_h_cov)); // max for numerical stability
 
         float det = det_cov_plus_h_cov;
-        // g.inv_cov_2d = covariance2D.inverse();
+        float det_inv = 1.f / det;
+        // we use this afterwards
+        g.inv_cov_2d << covariance2D(1,1) * det_inv, -covariance2D(1,0) * det_inv,
+                        -covariance2D(1,0) * det_inv, covariance2D(0,0) * det_inv;
 
         // filter with tile grid
         // calc eignvals
@@ -139,10 +142,10 @@ int main(){
 	
 
         Eigen::Vector3f colors;
-        colors << 0.0f, 0.0f, 0.0f;
+        colors << 0.5f, 0.5f, 0.5f;
         // compute colors based on coefficients
-        Eigen::Vector3f dif = g.xyz - cam.T;
-        dif.normalize();
+        Eigen::Vector3f dif = cam.T - g.xyz;
+        dif = dif / dif.norm();
         //implementation here is referenced from forward.cu from https://github.com/graphdeco-inria/gaussian-splatting 
   		float x = dif[0];
     	float y = dif[1];
@@ -151,46 +154,109 @@ int main(){
 		float xy = x * y, yz = y * z, xz = x * z;
         for(int i=0;i<=2;i++){
             int base_idx = i * NUM_COEFF;
-            for(int j=0;j<NUM_COEFF;j++){
-                if(j == 0){
-                    colors[i] += SH_C0 * g.f_dc[base_idx];
-                }else if(j >=1 && j <=3){
-                    colors[i] += SH_C1 * (-1 * y * g.f_rest[base_idx + 1] +
-                                         z * g.f_rest[base_idx + 2] -
-                                         x * g.f_rest[base_idx + 3]);
-                }else if(j >=4 && j <=8){
-                    colors[i] += SH_C2[0] * xy * g.f_rest[base_idx + 4] +
-				                SH_C2[1] * yz * g.f_rest[base_idx + 5] +
-				                SH_C2[2] * (2.0f * zz - xx - yy) * g.f_rest[base_idx + 6] +
-				                SH_C2[3] * xz * g.f_rest[base_idx + 7] +
-				                SH_C2[4] * (xx - yy) * g.f_rest[base_idx + 8];
-                }else if(j >=9){
-                    colors[i] += SH_C3[0] * y * (3.0f * xx - yy) * g.f_rest[base_idx + 9] +
-				            	SH_C3[1] * xy * z * g.f_rest[base_idx + 10] +
-				            	SH_C3[2] * y * (4.0f * zz - xx - yy) * g.f_rest[base_idx + 11] +
-				            	SH_C3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) * g.f_rest[base_idx + 12] +
-				            	SH_C3[4] * x * (4.0f * zz - xx - yy) * g.f_rest[base_idx + 13] +
-				            	SH_C3[5] * z * (xx - yy) * g.f_rest[base_idx + 14] +
-				            	SH_C3[6] * x * (xx - 3.0f * yy) * g.f_rest[base_idx + 15];
-                }
-            }
+            colors[i] += SH_C0 * g.f_dc[i];
+            colors[i] += SH_C1 * (-1 * y * g.f_rest[base_idx] +
+                                z * g.f_rest[base_idx + 1] -
+                                x * g.f_rest[base_idx + 2]);
+            colors[i] += SH_C2[0] * xy * g.f_rest[base_idx + 3] +
+	                     SH_C2[1] * yz * g.f_rest[base_idx + 4] +
+		                 SH_C2[2] * (2.0f * zz - xx - yy) * g.f_rest[base_idx + 5] +
+		                 SH_C2[3] * xz * g.f_rest[base_idx + 6] +
+		                 SH_C2[4] * (xx - yy) * g.f_rest[base_idx + 7];
+            colors[i] += SH_C3[0] * y * (3.0f * xx - yy) * g.f_rest[base_idx + 8] +
+		               	 SH_C3[1] * xy * z * g.f_rest[base_idx + 9] +
+				         SH_C3[2] * y * (4.0f * zz - xx - yy) * g.f_rest[base_idx + 10] +
+				         SH_C3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) * g.f_rest[base_idx + 11] +
+				         SH_C3[4] * x * (4.0f * zz - xx - yy) * g.f_rest[base_idx + 12] +
+				         SH_C3[5] * z * (xx - yy) * g.f_rest[base_idx + 13] +
+				         SH_C3[6] * x * (xx - 3.0f * yy) * g.f_rest[base_idx + 14];
+            
+            //clamp
+            colors[i] = std::max(0.0f, colors[i]);
         }
         g.color = colors;
+
     }
 
     // sort gaussians in each tile based on depth
     for(int tx=0;tx<grid[0];tx++){
         for(int ty=0;ty<grid[1];ty++){
             Tile &tile = tiles.at(tx * grid[1] + ty);
-            std::cout << "Tile (" << tx << ", " << ty << ") has " << tile.unsorted_gaussians.size() << " gaussians." << std::endl;
+            if(tile.unsorted_gaussians.size() == 0)
+                continue;
+            //std::cout << "Tile (" << tx << ", " << ty << ") has " << tile.unsorted_gaussians.size() << " gaussians." << std::endl;
             // sort based on depth
             std::sort(tile.unsorted_gaussians.begin(), tile.unsorted_gaussians.end(),
                 [](Gaussian3D* a, Gaussian3D* b) {
-                    return a->xyz_view[2] < b->xyz_view[2];
+                    return a->xyz_view[2] > b->xyz_view[2];
                 });
             tile.sorted_gaussians = tile.unsorted_gaussians;
         }
     }
+
+    // rendering
+    cv::Mat image(cam.height, cam.width, CV_32FC3, cv::Scalar(0,0,0));
+
+    for(int tx=0;tx<grid[0];tx++){
+        for(int ty=0;ty<grid[1];ty++){
+            for(int i=0;i<GRID_SIZE_X;i++){
+                for(int j=0;j<GRID_SIZE_Y;j++){
+                    int pixel_x = tx * GRID_SIZE_X + i;
+                    int pixel_y = ty * GRID_SIZE_Y + j;
+                    // this can be happen if tx, ty is close to the boundary
+                    if(pixel_x >= cam.width || pixel_y >= cam.height)
+                        continue;
+                    Tile &tile = tiles.at(tx * grid[1] + ty);
+                    Eigen::Vector3f pixel_color;
+                    pixel_color << 0.f, 0.f, 0.f;
+                    float pixel_opacity = 1.0f;
+                    for(Gaussian3D* g_ptr : tile.sorted_gaussians){
+                        Gaussian3D &g = *g_ptr;
+                        // compute contribution to pixel
+                        Eigen::Vector2f diff;
+                        //difference to the center of gaussian
+                        diff[0] = pixel_x + 0.5f - g.screen_coord[0];
+                        diff[1] = pixel_y + 0.5f - g.screen_coord[1];
+                       
+                        float exponent = -0.5f * diff.transpose() * g.inv_cov_2d * diff;
+                        if(exponent > 0.f){
+                            continue;
+                        }
+                        float weight = std::exp(exponent); // prevent overflow
+                        float alpha = std::min(0.99f, g.opacity * weight);
+            			if (alpha < 1.0f / 255.0f)
+			            	continue;
+                        
+                        pixel_color += pixel_opacity * alpha * g.color;
+                        pixel_opacity = pixel_opacity * (1.f - alpha);
+                        if(pixel_opacity <= 0.0001f){
+                            //early return
+                            //break; 
+                        }
+                    }
+                    //clamp color
+                    pixel_color[0] = std::min(1.0f, pixel_color[0]);
+                    pixel_color[1] = std::min(1.0f, pixel_color[1]);
+                    pixel_color[2] = std::min(1.0f, pixel_color[2]); 
+                    pixel_color[0] = std::max(0.0f, pixel_color[0]);
+                    pixel_color[1] = std::max(0.0f, pixel_color[1]);
+                    pixel_color[2] = std::max(0.0f, pixel_color[2]);   
+                    pixel_color[0] = std::pow(pixel_color[0], 1.0f / 2.2f);
+                    pixel_color[1] = std::pow(pixel_color[1], 1.0f / 2.2f);
+                    pixel_color[2] = std::pow(pixel_color[2], 1.0f / 2.2f);
+                           
+                    // store to buffer
+                    image.at<cv::Vec3f>(pixel_y, pixel_x) = cv::Vec3f(pixel_color[2], pixel_color[1], pixel_color[0]);
+                }
+            }
+        }
+    }
+
+    //output to file
+    cv::Mat display;
+    image.convertTo(display, CV_8UC3, 255.0);
+    cv::imwrite("output.png", display);
+
     
     
 

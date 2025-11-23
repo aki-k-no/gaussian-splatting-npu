@@ -1,7 +1,7 @@
 #ifndef CAMERA_H
 #define CAMERA_H
 #include <array>
-#include <eigen3/Eigen/Dense>
+#include <Eigen/Dense>
 
 struct Camera {
     Eigen::Matrix3f R; // rotation matrix
