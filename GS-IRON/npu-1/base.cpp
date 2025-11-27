@@ -10,61 +10,31 @@
 #include "const.hpp"
 #include "util.hpp"
 #include "tile.hpp"
+#include "camera_loader.hpp"
 
 #include <iostream>
 #include <algorithm>
 #include <vector>
 #include <array>
+#include <string>
 
 #include "opencv2/opencv.hpp"
 
 #define NUM_COEFF 15
 #define antialiasing false
 
-int main(){
+
+void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_name){
 
     // load gaussians from file
-    GaussianGroup group = loadGaussiansFromFile("point_cloud.ply");
+    GaussianGroup group = loadGaussiansFromFile(ply_name);
     
 
-    Eigen::Matrix4f baseMat_W2C;
-    baseMat_W2C << -0.9250140190124512f, -0.2748899757862091f, 0.2622683644294739f, -1.0572376251220703f,
-    -0.37993317842483526f, 0.6692678928375244f, -0.6385383605957031f, 2.5740303993225098f,
-    -0.0f, -0.6903012990951539f, -0.7235219478607177f, 2.9166102409362793f,
-    0.f, 0.f, 0.f, 1.f;
 
-    Eigen::Matrix4f baseMat_C2W;
-    baseMat_C2W = baseMat_W2C.inverse();
 
     // initialize camera
     Camera cam;
-    cam.R = baseMat_C2W.block<3,3>(0,0);
-    cam.T << baseMat_C2W(0,3), baseMat_C2W(1,3), baseMat_C2W(2,3);
-    cam.fx = 1111.1f;
-    cam.fy = 1111.1f;
-    cam.cx = 400.0f;
-    cam.cy = 400.0f;
-    cam.width = 800;
-    cam.height = 800;
-
-
-    // preprocess step
-    Eigen::Matrix4f world_to_view;
-    world_to_view.block<3,3>(0,0) = cam.R;
-    world_to_view.block<3,1>(0,3) = cam.T;
-    world_to_view.block<1,1>(3,3) <<  1.f;
-    world_to_view(3,0) = 0.f;
-    world_to_view(3,1) = 0.f;
-    world_to_view(3,2) = 0.f;
-
-
-    Eigen::Matrix4f proj_mat;
-    proj_mat = getProjMat(100,0.01,0.69,0.69);
-
-    Eigen::Matrix4f full_proj = proj_mat * world_to_view;
-    
-    
-    cam.pos = world_to_view.transpose().inverse().block<1,3>(3,0);
+    load_camera(cam, baseMat_W2C);
 
 
     // determine grid size    
@@ -80,10 +50,10 @@ int main(){
         // transform to view space
         Eigen::Vector4f pos_vec;
         pos_vec << g.xyz[0], g.xyz[1], g.xyz[2], 1.0f;
-        Eigen::Vector4f pos_view = full_proj * pos_vec;
+        Eigen::Vector4f pos_view = cam.full_proj * pos_vec;
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
-        g.xyz_view = (world_to_view * pos_vec).head<3>();
+        g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
         
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
@@ -139,7 +109,7 @@ int main(){
         J << cam.fx / _z, 0.0f, -cam.fx * g.xyz_view[0] / (_z * _z),
              0.0f, cam.fy / _z, -cam.fy * g.xyz_view[1] / (_z * _z),
              0.f, 0.f, 0.f;
-        Eigen::Matrix<float, 3, 3> J_R = J * world_to_view.block<3,3>(0,0);
+        Eigen::Matrix<float, 3, 3> J_R = J * cam.world_to_view.block<3,3>(0,0);
         
 
         Eigen::Matrix3f covariance2D = J_R * covariance3D * J_R.transpose(); 
@@ -296,14 +266,22 @@ int main(){
     //output to file
     cv::Mat display;
     image.convertTo(display, CV_8UC3, 255.0);
-    cv::imwrite("output.png", display);
-
-    
-    
-
-
+    cv::imwrite(img_name, display);
 
 }
 
+
+int main(){
+
+    Eigen::Matrix4f baseMat_W2C;
+    baseMat_W2C << -0.9250140190124512f, -0.2748899757862091f, 0.2622683644294739f, -1.0572376251220703f,
+    -0.37993317842483526f, 0.6692678928375244f, -0.6385383605957031f, 2.5740303993225098f,
+    -0.0f, -0.6903012990951539f, -0.7235219478607177f, 2.9166102409362793f,
+    0.f, 0.f, 0.f, 1.f;
+
+    render("point_cloud.ply", baseMat_W2C , "output.png");
+
+
+}
 
 #endif // BASE_CPP
