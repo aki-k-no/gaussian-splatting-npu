@@ -38,7 +38,7 @@ int main(){
 
     // initialize camera
     Camera cam;
-    cam.R = baseMat_C2W.block<3,3>(0,0).transpose();
+    cam.R = baseMat_C2W.block<3,3>(0,0);
     cam.T << baseMat_C2W(0,3), baseMat_C2W(1,3), baseMat_C2W(2,3);
     cam.fx = 1111.1f;
     cam.fy = 1111.1f;
@@ -51,21 +51,20 @@ int main(){
     // preprocess step
     Eigen::Matrix4f world_to_view;
     world_to_view.block<3,3>(0,0) = cam.R;
-    world_to_view.block<1,3>(3,0) = cam.T.transpose();
+    world_to_view.block<3,1>(0,3) = cam.T;
     world_to_view.block<1,1>(3,3) <<  1.f;
-    world_to_view(0,3) = 0.f;
-    world_to_view(1,3) = 0.f;
-    world_to_view(2,3) = 0.f;
+    world_to_view(3,0) = 0.f;
+    world_to_view(3,1) = 0.f;
+    world_to_view(3,2) = 0.f;
 
 
     Eigen::Matrix4f proj_mat;
-    proj_mat = getProjMat(100,0.01,0.69,0.69).transpose();
+    proj_mat = getProjMat(100,0.01,0.69,0.69);
 
-    Eigen::Matrix4f full_proj = world_to_view * proj_mat;
+    Eigen::Matrix4f full_proj = proj_mat * world_to_view;
     
-    std::cout << full_proj << std::endl;
     
-    cam.pos = world_to_view.inverse().block<1,3>(3,0);
+    cam.pos = world_to_view.transpose().inverse().block<1,3>(3,0);
 
 
     // determine grid size    
@@ -81,23 +80,14 @@ int main(){
         // transform to view space
         Eigen::Vector4f pos_vec;
         pos_vec << g.xyz[0], g.xyz[1], g.xyz[2], 1.0f;
-        Eigen::Vector4f pos_view = full_proj.transpose() * pos_vec;
-        if(i == 0){
-            std::cout << "before\n" << pos_view << "\n";
-        }
+        Eigen::Vector4f pos_view = full_proj * pos_vec;
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
-        g.xyz_view = (world_to_view.transpose() * pos_vec).head<3>();
+        g.xyz_view = (world_to_view * pos_vec).head<3>();
         
-        if(i == 0){
-            std::cout << "after\n" << pos_view << "\n";
-        }
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
 
-        if(i == 0){
-            std::cout << g.screen_coord[0] << " " << g.screen_coord[1] << std::endl;
-        }
         
         
         
@@ -149,15 +139,9 @@ int main(){
         J << cam.fx / _z, 0.0f, -cam.fx * g.xyz_view[0] / (_z * _z),
              0.0f, cam.fy / _z, -cam.fy * g.xyz_view[1] / (_z * _z),
              0.f, 0.f, 0.f;
-        Eigen::Matrix<float, 3, 3> J_R = J * world_to_view.block<3,3>(0,0).transpose();
+        Eigen::Matrix<float, 3, 3> J_R = J * world_to_view.block<3,3>(0,0);
         
 
-        // if(i==0){
-        //     std::cout << J << std::endl;
-        //     std::cout << world_to_view.block<3,3>(0,0).transpose() << std::endl;
-        //     std::cout << J_R.transpose() << std::endl;
-        //     std::cout << covariance3D.transpose() << std::endl;
-        // }
         Eigen::Matrix3f covariance2D = J_R * covariance3D * J_R.transpose(); 
         constexpr float h_var = 0.3f;
 	    float det_cov2D = covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0);
