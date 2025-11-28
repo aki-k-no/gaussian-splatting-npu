@@ -21,31 +21,33 @@
 
 const int M=4;
 const int K=8;
-const int N=4;
+const int N=8;
 using MMUL_PROJ = aie::mmul<M, K, N, bfloat16, bfloat16>;
 
 // note that size of proj mat is always 4x4, gaussian is 4xN
-void proj_to_view_space(bfloat16 *restrict proj_mat, bfloat16 *restrict gaussians, bfloat16 *restrict output, const int GAUSSIAN_SIZE) {
+template <const int GAUSSIAN_SIZE>
+void proj_to_view_space(bfloat16 *restrict proj_mat, bfloat16 *restrict gaussians, bfloat16 *restrict output) {
     // parallel factor
 
     // load input data
-    auto pa=aie::begin_vector<M * K>(proj_mat);
-    aie::vector<bfloat16,M * K> va=*pa;
+    aie::vector<bfloat16,M * K> va = aie::load_v<M * K>(proj_mat);
+    
     
     event0();
     AIE_PREPARE_FOR_PIPELINING
-    AIE_LOOP_RANGE(32, 32)
+    // AIE_LOOP_RANGE(32, 32)
     // compute over all elements
-    for (size_t i = 0; i < GAUSSIAN_SIZE / N; i += N) {
+    for (size_t i = 0; i < GAUSSIAN_SIZE / K; i += 1) {
         //load elements
-        auto pb=aie::begin_vector<K * N>(proj_mat + sizeof(bfloat16) * i * 4);
-        aie::vector<bfloat16,K * N> vb=*pb;
+        aie::vector<bfloat16,K * N> vb=aie::load_v<K * N>(gaussians + i * N * K);
+        
         MMUL_PROJ mmul;
         //matrix multiply
+
         mmul.mul(va, vb);
         // store data
-        aie::store_v(output, mmul.to_vector<bfloat16>());
-        aie::store_v(output, vb);
+        aie::store_v(output + i * M * N, mmul.to_vector<bfloat16>());
+        //aie::store_v(output + i * 4 * K, vb);
     }
     event1();
     return;
@@ -53,6 +55,6 @@ void proj_to_view_space(bfloat16 *restrict proj_mat, bfloat16 *restrict gaussian
 
 extern "C" {
 
-void f32_proj_to_view_space(bfloat16 *proj_in, bfloat16 *gaussian_in, bfloat16 *out) { proj_to_view_space(proj_in, gaussian_in, out, 1024); }
+void f32_proj_to_view_space(bfloat16 *proj_in, bfloat16 *gaussian_in, bfloat16 *out) { proj_to_view_space<1024>(proj_in, gaussian_in, out); }
 
 } // extern "C"

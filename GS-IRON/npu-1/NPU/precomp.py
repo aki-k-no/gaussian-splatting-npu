@@ -14,29 +14,30 @@ import sys
 
 from aie.iron import Kernel, ObjectFifo, Program, Runtime, Worker
 from aie.iron.placers import SequentialPlacer
-from aie.iron.device import Tile, NPU1, NPU2
+from aie.iron.device import NPU1Col1, NPU2Col1, Tile
 from aie.helpers.taplib.tap import TensorAccessPattern
+from aie.iron.controlflow import range_
 
 
 def precomp(dev):
     xfr_dtype = bfloat16
 
     # Define tensor types
-    line_size = 1024
-    proj_ty = np.ndarray[(4*4,), np.dtype[xfr_dtype]]
+    line_size = 256
+    proj_ty = np.ndarray[(4*8,), np.dtype[xfr_dtype]]
     gaussian_ty = np.ndarray[(4*line_size,), np.dtype[xfr_dtype]]
 
 
     # Dataflow with ObjectFifos
-    of_proj =  ObjectFifo(proj_ty, name=f"inproj_0_1")
-    of_gaussian = ObjectFifo(gaussian_ty, name=f"ingaussian_0_1")
+    of_proj =  ObjectFifo(proj_ty, name="inproj_0_1")
+    of_gaussian = ObjectFifo(gaussian_ty, name="ingaussian_0_1")
     
-    of_out = ObjectFifo(gaussian_ty, name=f"out0_1")
+    of_out = ObjectFifo(gaussian_ty, name="out0_1")
     
     # External, binary kernel definition
     proj_func = Kernel(
         "f32_proj_to_view_space",
-        "precomp.cc.o",
+        "precomp.o",
         [proj_ty, gaussian_ty, gaussian_ty],
     )
 
@@ -69,15 +70,13 @@ def precomp(dev):
     with rt.sequence(proj_ty, gaussian_ty, gaussian_ty) as (a_in, b_in, c_out):
         rt.start(proj_worker)
 
-        # Initialize a group for parallel drain tasks, with fill resources free'd when drains complete.
-        tg = rt.task_group()
+        
 
         # Fill the input objectFIFOs with data
-        rt.fill(of_proj.prod(), a_in, task_group=tg)
-        rt.fill(of_gaussian.prod(), b_in, task_group=tg)
+        rt.fill(of_proj.prod(), a_in)
+        rt.fill(of_gaussian.prod(), b_in)
         # Drain the output objectFIFOs with data
-        rt.drain(of_out.cons(), c_out, wait=True, task_group=tg,)
-        rt.finish_task_group(tg)
+        rt.drain(of_out.cons(), c_out, wait=True)
 
     # Place components (assign them resources on the device) and generate an MLIR module
     return Program(dev, rt).resolve_program(SequentialPlacer())
@@ -91,12 +90,14 @@ p.add_argument("-d", "--dev", required=True, dest="device", help="AIE Device")
 opts = p.parse_args(sys.argv[1:])
 
 if opts.device == "npu":
-    dev = NPU1()  # Four columns of NPU1, the maximum available
+    dev = NPU1Col1()  # Four columns of NPU1, the maximum available
 elif opts.device == "npu2":
-    dev = NPU2()  # Eight columns of NPU2, the maximum available
+    dev = NPU2Col1()  # Eight columns of NPU2, the maximum available
 else:
     raise ValueError("[ERROR] Device name {} is unknown".format(opts.device))
 
 ## Call the my_relu function with the parsed arguments
 ## and print the MLIR as a result
 print(precomp(dev))
+
+

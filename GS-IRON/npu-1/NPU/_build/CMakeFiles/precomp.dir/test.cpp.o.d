@@ -317,4 +317,5 @@ CMakeFiles/precomp.dir/test.cpp.o: \
  /opt/xilinx/xrt/include/xrt/experimental/xrt_hw_context.h \
  /usr/include/c++/13/functional \
  /usr/include/c++/13/bits/move_only_function.h \
- /usr/include/c++/13/bits/mofunc_impl.h
+ /usr/include/c++/13/bits/mofunc_impl.h \
+ /home/okuno/bthesis2025/gaussian-splatting-npu/mlir-aie/ironenv/lib/python3.12/site-packages/mlir_aie/runtime_lib/x86_64/test_lib/include/cxxopts.hpp

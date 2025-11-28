@@ -22,26 +22,21 @@ PY_SRC = precomp.py
 
 devicename = npu2
 
-in1_size = 16 # in bytes
-in2_size = 16384 # in bytes
-out_size = 16384 # in bytes, should always be equal to in1_size
-
 .PHONY : all clean build
-	
-all: $(TARGET) build/$(KERNEL_OBJ) build/aie_$(PY_SRC:.py=.mlir)
-	echo $(srcdir)
-	echo "placeholder"
+.SECONDARY:
 
-build/%.cc.o: %.cc
+all: build/final_precomp.xclbin build/insts_precomp.bin
+
+build/precomp.o: precomp.cc
 	mkdir -p ${@D}
-	${PEANO_INSTALL_DIR}/bin/clang++ ${PEANOWRAP2_FLAGS} ${INCLUDES} -c $< -o $@
+	${PEANO_INSTALL_DIR}/bin/clang++ ${PEANOWRAP2P_FLAGS} ${INCLUDES} -c $< -o $@
 
 
 build/aie_%.mlir: %.py
 	mkdir -p ${@D}
 	python3 $< -d ${devicename} > $@
 
-build/final_%.xclbin: build/aie_%.mlir build/%.cc.o
+build/final_%.xclbin: build/aie_%.mlir build/%.o
 	mkdir -p ${@D}
 ifeq ($(CHESS), true)
 	cd ${@D} && aiecc.py --aie-generate-xclbin --no-compile-host --xclbin-name=${@F} \
