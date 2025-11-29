@@ -25,7 +25,7 @@ devicename = npu2
 .PHONY : all clean build
 .SECONDARY:
 
-all: build/final_precomp.xclbin build/insts_precomp.bin
+all: build/final_precomp.xclbin
 
 build/precomp.o: precomp.cc
 	mkdir -p ${@D}

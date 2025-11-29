@@ -5,11 +5,26 @@
 #include "xrt/xrt_bo.h"
 #include "xrt/xrt_device.h"
 #include "xrt/xrt_kernel.h"
-#include <cstdint>
 
-using DATATYPE_IN1 = std::bfloat16_t;
-using DATATYPE_IN2 = std::bfloat16_t;
-using DATATYPE_OUT = std::bfloat16_t;
+#include <cstdint>
+#include <random>
+
+using DATATYPE_IN1 = std::float32_t;
+using DATATYPE_IN2 = std::float32_t;
+using DATATYPE_OUT = std::float32_t;
+
+// helper function to generate random bf16
+void generate_random_bfloat16(std::bfloat16_t* buf, size_t n, float min_val, float max_val) {
+    std::random_device rd;
+    std::default_random_engine eng(rd());
+    std::uniform_real_distribution<> distr(min_val, max_val);
+
+    for (size_t i = 0; i < n; i++) {
+        float r = distr(eng);
+        memcpy(buf + i, reinterpret_cast<char *>(&r) + sizeof(float) - sizeof(std::bfloat16_t), sizeof(std::bfloat16_t));
+        // std::cout << "generated" << buf[i] << " " << sizeof(std::bfloat16_t) << "\n";
+    }
+}
 
 
 // Functional correctness verifyer
@@ -18,18 +33,23 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
     int errors = 0;
     verbosity = 2;
 
-    for (int i = 0; i < 8; i++) {
+    for (int iter = 0; iter < SIZE / 4; iter++){
         for(int j=0;j<4;j++){
-            int32_t ref = bufIn1[j * 8] * bufIn2[i] + bufIn1[j * 8 + 1] * bufIn2[i + 8]
-                          + bufIn1[j * 8 + 2] * bufIn2[i + 16] + bufIn1[j * 8 + 3] * bufIn2[i + 24];
-            int32_t test = bufOut[i + j * 8];
-            if (test != ref) {
-                if (verbosity >= 1)
-                    std::cout << "Error in output " << i + j * 8<< ":" << test << " != " << ref << std::endl;
+            for (int i = 0; i < 4; i++) {
+                DATATYPE_OUT ref = bufIn1[j * 4] * bufIn2[iter * 16 + i] + bufIn1[j * 4 + 1] * bufIn2[iter * 16 + i + 4]
+                              + bufIn1[j * 4 + 2] * bufIn2[iter * 16 + i + 8] + bufIn1[j * 4 + 3] * bufIn2[iter * 16 + i + 12];
+                DATATYPE_OUT test = bufOut[iter * 16 + i + j * 4];
+                if (test != ref) {
+                    if (verbosity >= 1){
+                        
+                        std::cout << "Error in output " << iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
+                    }
                     errors++;
-            } else {
-                if (verbosity >= 1)
-                    std::cout << "Correct output " << test << " == " << ref << std::endl;
+                    
+                } else {
+                    if (verbosity >= 1)
+                        std::cout << "Correct in output " << iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
+                }
             }
         }
     }
@@ -67,7 +87,7 @@ int main(int argc, const char *argv[]) {
     // set up the buffer objects
     auto bo_instr = xrt::bo(device, instr_v.size() * sizeof(int),
                           XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
-    auto bo_inA = xrt::bo(device, IN1_SIZE * 4 * 2 * sizeof(DATATYPE_IN1),
+    auto bo_inA = xrt::bo(device, IN1_SIZE * 4 * sizeof(DATATYPE_IN1),
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
     auto bo_inB = xrt::bo(device, IN2_SIZE * 4 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
@@ -85,20 +105,23 @@ int main(int argc, const char *argv[]) {
     DATATYPE_IN1 *bufInA = bo_inA.map<DATATYPE_IN1 *>();
     for (int i = 0; i < IN1_SIZE ; i++){
         for (int j=0; j < 4; j++){
-            bufInA[8 * i + j] = i;
-            bufInA[8 * i + 4 + j] = 0;
+            bufInA[4 * i + j] = 4 * i + j;
         }
-
     }
+    
+//    generate_random_bfloat16(bufInA, IN1_SIZE * 4, 0, 10);
+
     // Initialize buffer bo_inFactor
     DATATYPE_IN2 *bufInB = bo_inB.map<DATATYPE_IN2 *>();
     for (int i = 0; i < IN2_SIZE * 4; i++)
         bufInB[i] = i + 1;
 
+//    generate_random_bfloat16(bufInB, IN2_SIZE * 8, 0, 10);
+
     // Zero out buffer bo_outC
     DATATYPE_OUT *bufOut = bo_outC.map<DATATYPE_OUT *>();
     for (int i = 0; i < OUT_SIZE * 4; i++)
-        bufOut[i] = 1;
+        bufOut[i] = 14;
 
     
     // sync host to device memories
@@ -118,6 +141,11 @@ int main(int argc, const char *argv[]) {
     // Sync device to host memories
     bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
 
-    verify(bufInA, bufInB, bufOut, IN2_SIZE, verbosity);
+    int errors = verify(bufInA, bufInB, bufOut, IN2_SIZE, verbosity);
+    if(errors == 0){
+        std::cout << "PASS!\n";
+    }else{
+        std::cout << "FAIL with " << errors << "errors\n";
+    }
 }
 

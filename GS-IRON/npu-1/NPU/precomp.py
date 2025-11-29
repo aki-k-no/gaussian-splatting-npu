@@ -20,11 +20,11 @@ from aie.iron.controlflow import range_
 
 
 def precomp(dev):
-    xfr_dtype = bfloat16
+    xfr_dtype = np.float32
 
     # Define tensor types
     line_size = 256
-    proj_ty = np.ndarray[(4*8,), np.dtype[xfr_dtype]]
+    proj_ty = np.ndarray[(4*4,), np.dtype[xfr_dtype]]
     gaussian_ty = np.ndarray[(4*line_size,), np.dtype[xfr_dtype]]
 
 
