@@ -18,68 +18,70 @@ from aie.iron.device import NPU1Col1, NPU2Col1, Tile
 from aie.helpers.taplib.tap import TensorAccessPattern
 from aie.iron.controlflow import range_
 
+from aie.dialects.aie import *
+from aie.dialects.aiex import *
+from aie.extras.context import mlir_mod_ctx
+from aie.helpers.dialects.ext.scf import _for as range_
+
+
 
 def precomp(dev):
     xfr_dtype = np.float32
 
-    # Define tensor types
-    line_size = 256
-    proj_ty = np.ndarray[(4*4,), np.dtype[xfr_dtype]]
-    gaussian_ty = np.ndarray[(4*line_size,), np.dtype[xfr_dtype]]
+    trace_size = 8192
 
 
-    # Dataflow with ObjectFifos
-    of_proj =  ObjectFifo(proj_ty, name="inproj_0_1")
-    of_gaussian = ObjectFifo(gaussian_ty, name="ingaussian_0_1")
-    
-    of_out = ObjectFifo(gaussian_ty, name="out0_1")
-    
-    # External, binary kernel definition
-    proj_func = Kernel(
-        "f32_proj_to_view_space",
-        "precomp.o",
-        [proj_ty, gaussian_ty, gaussian_ty],
-    )
-
-    # Task for the core to perform
-    def core_proj_fn(of_proj, of_gaussian, of_out, proj_func):
-        elemOut = of_out.acquire(1)
-        elemIn1 = of_proj.acquire(1)
-        elemIn2 = of_gaussian.acquire(1)
-        proj_func(elemIn1, elemIn2, elemOut)
-        of_proj.release(1)
-        of_gaussian.release(1)
-        of_out.release(1)
-
-    # Create a worker to perform the task
-    proj_worker = Worker(
-            core_proj_fn,
-            fn_args = [
-                of_proj.cons(),
-                of_gaussian.cons(),
-                of_out.prod(),
-                proj_func,
-            ],
-        )
-    
-
-     
-
-    # Runtime operations to move data to/from the AIE-array
-    rt = Runtime()
-    with rt.sequence(proj_ty, gaussian_ty, gaussian_ty) as (a_in, b_in, c_out):
-        rt.start(proj_worker)
-
+    @device(dev)
+    def device_body():
         
+        # Define tensor types
+        line_size = 256
+        proj_ty = np.ndarray[(4*4,), np.dtype[xfr_dtype]]
+        gaussian_ty = np.ndarray[(4*line_size,), np.dtype[xfr_dtype]]
 
-        # Fill the input objectFIFOs with data
-        rt.fill(of_proj.prod(), a_in)
-        rt.fill(of_gaussian.prod(), b_in)
-        # Drain the output objectFIFOs with data
-        rt.drain(of_out.cons(), c_out, wait=True)
+        # AIE Core Function declarations
+        proj_func = external_func(
+            "f32_proj_to_view_space", inputs=[proj_ty, gaussian_ty, gaussian_ty]
+        )
 
-    # Place components (assign them resources on the device) and generate an MLIR module
-    return Program(dev, rt).resolve_program(SequentialPlacer())
+        # Tile declarations
+        ShimTile0 = tile(0, 0)
+        ComputeTileProj = tile(0, 2)
+
+        # AIE-array data movement with object fifos
+        of_proj = object_fifo("proj", ShimTile0, ComputeTileProj, 2, proj_ty)
+        of_gaussian = object_fifo("gaussian", ShimTile0, ComputeTileProj, 2, gaussian_ty)
+        of_out = object_fifo("out", ComputeTileProj, ShimTile0, 2, gaussian_ty)
+
+
+        # Compute tile for Projection Mat
+        @core(ComputeTileProj, "precomp.o")
+        def core_body():
+            for _ in range_(0xFFFFFFFF):
+                elemOut = of_out.acquire(ObjectFifoPort.Produce, 1)
+                elemIn1 = of_proj.acquire(ObjectFifoPort.Consume, 1)
+                elemIn2 = of_gaussian.acquire(ObjectFifoPort.Consume, 1)
+                proj_func(elemIn1, elemIn2, elemOut)
+                of_proj.release(ObjectFifoPort.Consume, 1)
+                of_gaussian.release(ObjectFifoPort.Consume, 1)
+                of_out.release(ObjectFifoPort.Produce,1)
+
+
+        # To/from AIE-array data movement
+        @runtime_sequence(proj_ty, gaussian_ty, gaussian_ty)
+        def sequence(A, B, C):
+            proj_task = shim_dma_single_bd_task(of_proj, A, sizes=[1, 1, 1, 16])
+            gaussian_task = shim_dma_single_bd_task(of_gaussian, B, sizes=[1, 1, 1, line_size * 4])
+            out_task = shim_dma_single_bd_task(
+                of_out, C, sizes=[1, 1, 1, line_size * 4], issue_token=True
+            )
+
+            dma_start_task(proj_task, gaussian_task, out_task)
+            dma_await_task(out_task)
+            dma_free_task(proj_task)
+            dma_free_task(gaussian_task)
+    
+
 
 
 p = argparse.ArgumentParser()
@@ -90,14 +92,18 @@ p.add_argument("-d", "--dev", required=True, dest="device", help="AIE Device")
 opts = p.parse_args(sys.argv[1:])
 
 if opts.device == "npu":
-    dev = NPU1Col1()  # Four columns of NPU1, the maximum available
+    dev = AIEDevice.npu1_1col  # Four columns of NPU1, the maximum available
 elif opts.device == "npu2":
-    dev = NPU2Col1()  # Eight columns of NPU2, the maximum available
+    dev = AIEDevice.npu2_1col  # Eight columns of NPU2, the maximum available
 else:
     raise ValueError("[ERROR] Device name {} is unknown".format(opts.device))
 
-## Call the my_relu function with the parsed arguments
-## and print the MLIR as a result
-print(precomp(dev))
+with mlir_mod_ctx() as ctx:
+    precomp(dev)
+    res = ctx.module.operation.verify()
+    if res == True:
+        print(ctx.module)
+    else:
+        print(res)
 
 

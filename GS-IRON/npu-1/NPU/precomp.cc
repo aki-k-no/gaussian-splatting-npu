@@ -41,8 +41,8 @@ void proj_to_view_space(float *restrict proj_mat, float *restrict gaussians, flo
     aie::accum<accfloat, 16> acc = aie::zeros<accfloat,16>();
     
     event0();
-    // AIE_PREPARE_FOR_PIPELINING
-    // AIE_LOOP_RANGE(32, 32)
+    AIE_PREPARE_FOR_PIPELINING
+    AIE_LOOP_RANGE(64, 64)
     // compute over all elements
     for (size_t i = 0; i < GAUSSIAN_SIZE / 4; i += 1) {
         //load elements
@@ -77,6 +77,6 @@ void proj_to_view_space(float *restrict proj_mat, float *restrict gaussians, flo
 
 extern "C" {
 
-void f32_proj_to_view_space(float *proj_in, float *gaussian_in, float *out) { proj_to_view_space<512>(proj_in, gaussian_in, out); }
+void f32_proj_to_view_space(float *proj_in, float *gaussian_in, float *out) { proj_to_view_space<256>(proj_in, gaussian_in, out); }
 
 } // extern "C"

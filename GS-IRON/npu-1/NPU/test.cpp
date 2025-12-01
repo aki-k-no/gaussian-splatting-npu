@@ -61,6 +61,7 @@ int main(int argc, const char *argv[]) {
     const int IN1_SIZE = 4;
     const int IN2_SIZE = 256;
     const int OUT_SIZE = IN2_SIZE;
+    const int TRACE_SIZE = 8192;
 
     // Program arguments parsing
     cxxopts::Options options("section-3");
@@ -93,6 +94,8 @@ int main(int argc, const char *argv[]) {
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
     auto bo_outC = xrt::bo(device, OUT_SIZE * 4 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
+    auto bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY,
+                            kernel.group_id(7));
 
     if (verbosity >= 1)
         std::cout << "Writing data into buffer objects.\n";
@@ -105,7 +108,7 @@ int main(int argc, const char *argv[]) {
     DATATYPE_IN1 *bufInA = bo_inA.map<DATATYPE_IN1 *>();
     for (int i = 0; i < IN1_SIZE ; i++){
         for (int j=0; j < 4; j++){
-            bufInA[4 * i + j] = 4 * i + j;
+            bufInA[4 * i + j] = 4 * i + j + 0.5;
         }
     }
     
@@ -114,7 +117,7 @@ int main(int argc, const char *argv[]) {
     // Initialize buffer bo_inFactor
     DATATYPE_IN2 *bufInB = bo_inB.map<DATATYPE_IN2 *>();
     for (int i = 0; i < IN2_SIZE * 4; i++)
-        bufInB[i] = i + 1;
+        bufInB[i] = i + 1 + 0.2;
 
 //    generate_random_bfloat16(bufInB, IN2_SIZE * 8, 0, 10);
 
@@ -124,22 +127,29 @@ int main(int argc, const char *argv[]) {
         bufOut[i] = 14;
 
     
+    char *bufTrace = bo_trace.map<char *>();
+    memset(bufTrace, 0, TRACE_SIZE);
+
+    
     // sync host to device memories
     bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    bo_trace.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
     // Execute the kernel and wait to finish
     if (verbosity >= 1)
         std::cout << "Running Kernel.\n";
     unsigned int opcode = 3;
     auto run =
-        kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
+        kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC, 0, bo_trace);
     run.wait();
 
     // Sync device to host memories
     bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+    bo_trace.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+    test_utils::write_out_trace((char *)bufTrace, TRACE_SIZE, "trace.txt");
 
     int errors = verify(bufInA, bufInB, bufOut, IN2_SIZE, verbosity);
     if(errors == 0){

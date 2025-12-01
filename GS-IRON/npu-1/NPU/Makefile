@@ -61,6 +61,14 @@ endif
 run : $(PROJ_NAME).exe build/final_$(PROJ_NAME).xclbin build/insts_precomp.bin 
 	${powershell} ./$< -x build/final_$(PROJ_NAME).xclbin -i build/insts_$(PROJ_NAME).bin -k MLIR_AIE
 
+copy : 
+	mkdir -p ../build
+	cp -r build/ ../
+
+trace : 
+	${srcdir}/../../../../mlir-aie/python/utils/parse_trace.py --input trace.txt --mlir build/aie_precomp.mlir --output trace_4b.json
+	${srcdir}/../../../../mlir-aie/python/utils/get_trace_summary.py --input trace_4b.json
+
 clean:
 	rm -f $(PROJ_NAME).exe
 	rm -rf build
