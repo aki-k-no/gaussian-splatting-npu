@@ -1,6 +1,7 @@
 #include "camera_loader.hpp"
 #include "camera.hpp"
 #include "util.hpp"
+#include "base.hpp"
 
 #include <Eigen/Dense>
 
@@ -35,6 +36,14 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C){
 
     cam.full_proj = proj_mat * cam.world_to_view;
     
+    // set matrix for NPU computation
+    #ifdef __USE_NPU
+    for(int i=0;i<4;i++){
+        for(int j=0;j<4;j++){
+            bufInA[i * 4 + j] = cam.world_to_view(i,j);
+        }
+    }
+    #endif
     
     cam.pos = cam.world_to_view.transpose().inverse().block<1,3>(3,0);
 }

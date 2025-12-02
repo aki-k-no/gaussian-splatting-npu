@@ -48,7 +48,7 @@ void proj_to_view_space(float *restrict proj_mat, float *restrict gaussians, flo
     for (size_t i = 0; i < GAUSSIAN_SIZE / 4; i += 1) {
         event0();
         //load elements
-        aie::vector<float, 16> y=aie::load_v<16>(gaussians + i * 16);
+        aie::vector<float, 16> y= aie::load_v<16>(gaussians + i * 16);
         aie::vector<float, 16> y0 = ::extract_v4float_broadcast_to_v16float(y, 0);
         aie::vector<float, 16> y1 = ::extract_v4float_broadcast_to_v16float(y, 1);
         aie::vector<float, 16> y2 = ::extract_v4float_broadcast_to_v16float(y, 2);

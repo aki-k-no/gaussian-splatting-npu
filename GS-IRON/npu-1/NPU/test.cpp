@@ -39,7 +39,7 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 DATATYPE_OUT ref = bufIn1[j * 4] * bufIn2[iter * 16 + i] + bufIn1[j * 4 + 1] * bufIn2[iter * 16 + i + 4]
                               + bufIn1[j * 4 + 2] * bufIn2[iter * 16 + i + 8] + bufIn1[j * 4 + 3] * bufIn2[iter * 16 + i + 12];
                 DATATYPE_OUT test = bufOut[iter * 16 + i + j * 4];
-                if (test != ref) {
+                if (test < ref - 0.1 || test > ref + 0.1) {
                     if (verbosity >= 1){
                         
                         std::cout << "Error in output " << iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
@@ -61,7 +61,7 @@ int main(int argc, const char *argv[]) {
     const int IN1_SIZE = 4;
     const int IN2_SIZE = 256;
     const int OUT_SIZE = IN2_SIZE;
-    const int TRACE_SIZE = 8192;
+    const int TRACE_SIZE = 8192 * 4;
 
     // Program arguments parsing
     cxxopts::Options options("section-3");

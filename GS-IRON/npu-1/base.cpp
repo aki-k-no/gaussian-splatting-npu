@@ -1,27 +1,106 @@
 // base implimentation for 3DGS
 // to check whether my understanding is correct or not
 
+
 #ifndef BASE_CPP
 #define BASE_CPP
 
-#include "loader.hpp"
-#include "camera.hpp"
-#include <Eigen/Dense>
-#include "const.hpp"
-#include "util.hpp"
-#include "tile.hpp"
-#include "camera_loader.hpp"
+
+#include "test_utils.h"
+#include "xrt_test_wrapper.h"
+#include "cxxopts.hpp"
+#include "xrt/xrt_bo.h"
+#include "xrt/xrt_device.h"
+#include "xrt/xrt_kernel.h"
 
 #include <iostream>
 #include <algorithm>
 #include <vector>
 #include <array>
 #include <string>
+#include <Eigen/Dense>
+#include <cstdint>
+#include <chrono>
 
 #include "opencv2/opencv.hpp"
 
 #define NUM_COEFF 15
 #define antialiasing false
+
+
+#include "loader.hpp"
+#include "camera.hpp"
+#include "const.hpp"
+#include "util.hpp"
+#include "tile.hpp"
+#include "camera_loader.hpp"
+#include "base.hpp"
+
+
+int verbosity;
+
+std::vector<uint32_t> instr_v;
+xrt::device device;
+xrt::kernel kernel;
+xrt::bo bo_instr;
+xrt::bo bo_inA;
+xrt::bo bo_inB;
+xrt::bo bo_outC;
+void *bufInstr;
+DATATYPE_IN1 *bufInA;
+DATATYPE_IN2 *bufInB;
+DATATYPE_OUT *bufOut;
+
+int opcode = 3;
+
+void setup_npu(int argc, const char *argv[]){
+
+    
+    const int IN1_SIZE = 4;
+    const int IN2_SIZE = 256;
+    const int OUT_SIZE = IN2_SIZE;
+
+    
+    // Program arguments parsing
+    cxxopts::Options options("section-3");
+    test_utils::add_default_options(options);
+
+    cxxopts::ParseResult vm;
+    test_utils::parse_options(argc, argv, options, vm);
+    verbosity = vm["verbosity"].as<int>();
+
+    // Load instruction sequence
+    instr_v =
+        test_utils::load_instr_binary(vm["instr"].as<std::string>());
+
+    
+
+    // Start the XRT context and load the kernel
+    
+
+    test_utils::init_xrt_load_kernel(device, kernel, verbosity,
+                                   vm["xclbin"].as<std::string>(),
+                                   vm["kernel"].as<std::string>());
+
+    // set up the buffer objects
+    bo_instr = xrt::bo(device, instr_v.size() * sizeof(int),
+                          XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
+    bo_inA = xrt::bo(device, IN1_SIZE * 4 * sizeof(DATATYPE_IN1),
+                        XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
+    bo_inB = xrt::bo(device, IN2_SIZE * 4 * sizeof(DATATYPE_IN2),
+                             XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
+    bo_outC = xrt::bo(device, OUT_SIZE * 4 * sizeof(DATATYPE_OUT),
+                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
+
+    bufInstr = bo_instr.map<void *>();
+    memcpy(bufInstr, instr_v.data(), instr_v.size() * sizeof(int));
+    
+    bufInA = bo_inA.map<DATATYPE_IN1 *>();
+    bufInB = bo_inB.map<DATATYPE_IN2 *>();
+    bufOut = bo_outC.map<DATATYPE_OUT *>();
+
+
+}
 
 
 void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_name){
@@ -35,6 +114,8 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     // initialize camera
     Camera cam;
     load_camera(cam, baseMat_W2C);
+    
+    auto start = std::chrono::steady_clock::now();
 
 
     // determine grid size    
@@ -43,8 +124,47 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     // iterate over gaussians
     std::vector<Gaussian3D> &gaussians = group.gaussians;  
 
-
+    
     int numGaussians =  gaussians.size();
+
+    // instead, calculate with NPU
+    #ifdef __USE_NPU
+    for(int i=0; i < (numGaussians - 1) / 256 + 1; i++){
+        //copy the data first
+        memcpy(bufInB, group.xyz_buf + i * 256 * 4, 256 * 4 * sizeof(DATATYPE_IN2));
+
+        
+
+        bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        auto run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
+        run.wait();
+        if(i==0){
+            std::cout << bufInB[256] << " " << bufInA[1] << "\n";
+            std::cout << bufOut[256] << " " << bufOut[4] << "\n";
+        }
+
+        // Sync device to host memories
+        bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+
+        // extract the data and save
+        for(int j = 0;j<64;j++){
+            for(int k = 0; k < 4; k++){
+                // save to gaussians, for now...
+                Gaussian3D &g = group.gaussians[i*256 + j * 4 + k];
+                
+                g.xyz_view[0] = bufOut[j*16 + k];
+                g.xyz_view[1] = bufOut[j*16 + k + 4];
+                g.xyz_view[2] = bufOut[j*16 + k + 8];
+
+            }
+        }
+
+    }
+    #endif
+
     for(int i=0;i<numGaussians;i++){
         Gaussian3D &g = group.gaussians[i];
         // transform to view space
@@ -53,11 +173,14 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         Eigen::Vector4f pos_view = cam.full_proj * pos_vec;
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
+        #ifndef __USE_NPU
         g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
+        #endif
         
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
 
+        
         
         
         
@@ -123,9 +246,6 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
 	    	h_convolution_scaling = std::sqrt(std::max(0.000025f, det_cov2D / det_cov_plus_h_cov)); // max for numerical stability
             g.opacity *= h_convolution_scaling;
         
-        if(i==0){
-            std::cout << covariance2D(0,0) << " " << covariance2D(0,1) << " " << covariance2D(1,1) << std::endl;
-        }
 
         float det = det_cov_plus_h_cov;
         float det_inv = 1.f / det;
@@ -198,7 +318,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
             Tile &tile = tiles.at(tx * grid[1] + ty);
             if(tile.unsorted_gaussians.size() == 0)
                 continue;
-            //std::cout << "Tile (" << tx << ", " << ty << ") has " << tile.unsorted_gaussians.size() << " gaussians." << std::endl;
+            // std::cout << "Tile (" << tx << ", " << ty << ") has " << tile.unsorted_gaussians.size() << " gaussians." << std::endl;
             // sort based on depth
             std::sort(tile.unsorted_gaussians.begin(), tile.unsorted_gaussians.end(),
                 [](Gaussian3D* a, Gaussian3D* b) {
@@ -263,6 +383,10 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         }
     }
 
+    auto end = std::chrono::steady_clock::now();
+    auto diff = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    std::cout << "Elapsed" << diff.count() << " micro sec\n";
+
     //output to file
     cv::Mat display;
     image.convertTo(display, CV_8UC3, 255.0);
@@ -271,13 +395,16 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
 }
 
 
-int main(){
+int main(int argc, const char *argv[]){
 
     Eigen::Matrix4f baseMat_W2C;
     baseMat_W2C << -0.9250140190124512f, -0.2748899757862091f, 0.2622683644294739f, -1.0572376251220703f,
     -0.37993317842483526f, 0.6692678928375244f, -0.6385383605957031f, 2.5740303993225098f,
     -0.0f, -0.6903012990951539f, -0.7235219478607177f, 2.9166102409362793f,
     0.f, 0.f, 0.f, 1.f;
+
+    setup_npu(argc, argv);
+
 
     render("point_cloud.ply", baseMat_W2C , "output.png");
 

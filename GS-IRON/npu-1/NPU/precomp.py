@@ -29,7 +29,7 @@ import aie.utils.trace as trace_utils
 def precomp(dev):
     xfr_dtype = np.float32
 
-    trace_size = 8192
+    trace_size = 8192 * 4
 
 
     @device(dev)

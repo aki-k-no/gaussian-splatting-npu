@@ -1,4 +1,5 @@
 #include "gaussian.hpp"
+#include "base.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -56,13 +57,22 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }
     }
 
+    group.xyz_buf = new float[(count / 256 + 1) * 256 * 4];
+
     // Read Gaussian data
     for(int i=0;i<count;i++){
+        
+        int loop_itr = i / 4 * 16;
+        int loop_res = i % 4;
+        int loop_id = loop_itr + loop_res;
+        
+        #ifdef __USE_NPU
+        group.xyz_buf[loop_id + 12] = 1;
+        #endif
 
 
         Gaussian3D gaussian;
         for(size_t j=0;j<propertyNames.size() ;j++){
-
            
             const std::string &propName = propertyNames[j];
             const std::string &propType = propertyTypes[j];
@@ -74,11 +84,27 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }
             // set property to gaussian
             if(propName == "x"){
+                #ifdef __USE_NPU
+                group.xyz_buf[loop_id] = value;
+                #else
                 gaussian.xyz[0] = value;
+                #endif
             }else if(propName == "y"){
+                
+                #ifdef __USE_NPU
+                group.xyz_buf[loop_id + 4] = value;
+                #else
                 gaussian.xyz[1] = value;
+                #endif
+                
+
             }else if(propName == "z"){
+                
+                #ifdef __USE_NPU
+                group.xyz_buf[loop_id + 8] = value;
+                #else
                 gaussian.xyz[2] = value;
+                #endif
             //note that these scalings are log-based
             }else if(propName == "scale_0"){
                 gaussian.scale[0] = value;
