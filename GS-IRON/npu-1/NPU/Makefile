@@ -51,7 +51,7 @@ $(PROJ_NAME).exe: ${srcdir}/test.cpp
 	rm -rf _build
 	mkdir -p _build
 	cd _build && ${powershell} cmake `${getwslpath} ${srcdir}` -DTARGET_NAME=$(PROJ_NAME) 
-	cd _build && ${powershell} cmake --build . --config Debug
+	cd _build && ${powershell} cmake --build . --config Release
 ifeq "${powershell}" "powershell.exe"
 	cp _build/$(PROJ_NAME).exe $@
 else
@@ -59,7 +59,7 @@ else
 endif
 
 run : $(PROJ_NAME).exe build/final_$(PROJ_NAME).xclbin build/insts_precomp.bin 
-	${powershell} gdb --args ./$< -x build/final_$(PROJ_NAME).xclbin -i build/insts_$(PROJ_NAME).bin -k MLIR_AIE
+	${powershell} ./$< -x build/final_$(PROJ_NAME).xclbin -i build/insts_$(PROJ_NAME).bin -k MLIR_AIE
 
 copy : 
 	mkdir -p ../build

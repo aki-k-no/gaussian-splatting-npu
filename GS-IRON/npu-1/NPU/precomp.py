@@ -29,7 +29,7 @@ import aie.utils.trace as trace_utils
 def precomp(dev):
     xfr_dtype = bfloat16
 
-    trace_size = 8192 * 4
+    trace_size = 0
 
 
     @device(dev)
@@ -81,7 +81,7 @@ def precomp(dev):
         def core_body_v2w():
             for _ in range_(0xFFFFFFFF):
                 elemIn1 = of_w2v.acquire(ObjectFifoPort.Consume, 1)
-                for _ in range_(4):
+                for _ in range_(1):
                     elemOut = of_out1.acquire(ObjectFifoPort.Produce, 1)
                     elemIn2 = of_gaussian.acquire(ObjectFifoPort.Consume, 1)
                     w2v_func(elemIn1, elemIn2, elemOut)
@@ -96,7 +96,7 @@ def precomp(dev):
         def core_body_camera():
             for _ in range_(0xFFFFFFFF):
                 elemIn1 = of_camera.acquire(ObjectFifoPort.Consume, 1)
-                for _ in range_(4):
+                for _ in range_(1):
                     elemOut = of_out2.acquire(ObjectFifoPort.Produce, 1)
                     elemIn2 = of_gaussian.acquire(ObjectFifoPort.Consume, 1)
                     camera_func(elemIn1, elemIn2, elemOut)
@@ -152,5 +152,4 @@ with mlir_mod_ctx() as ctx:
         print(ctx.module)
     else:
         print(res)
-
 

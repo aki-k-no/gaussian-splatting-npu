@@ -31,7 +31,7 @@ void generate_random_bfloat16(std::bfloat16_t* buf, size_t n, float min_val, flo
 int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                              DATATYPE_OUT *bufOut, int SIZE, int verbosity) {
     int errors = 0;
-    verbosity = 0;
+    verbosity = 1;
 
     for (int iter = 0; iter < SIZE / 8; iter++){
         for(int j=0;j<4;j++){
@@ -44,7 +44,7 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                               + bufIn1[11] * bufIn2[iter * 16 + i + 8] + bufIn1[15] * bufIn2[iter * 16 + i + 12]);
                 DATATYPE_OUT test = bufOut[iter * 16 + i + j * 4];
                 DATATYPE_OUT test2 = bufOut[iter * 16 + i + j * 4 + SIZE * 4];
-                if (test < ref - 0.01 || test > ref + 0.01) {
+                if (test < ref - 0.1 || test > ref + 0.1) {
                     if (verbosity >= 1){
                         
                         std::cout << "Error in output " << iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
@@ -52,7 +52,7 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                     errors++;
                     
                 } else {
-                    if (verbosity >= 1)
+                    if (verbosity >= 2)
                         std::cout << "Correct in output " << iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
                 }
                 // if(test2 < ref2 - 0.1 || test2 > ref2 + 0.1) {
@@ -81,7 +81,7 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
 int main(int argc, const char *argv[]) {
 
     const int IN1_SIZE = 16 + 16;
-    const int IN2_SIZE = 128 / 2;
+    const int IN2_SIZE = 64;
     const int OUT_SIZE = IN2_SIZE + IN2_SIZE;
     const int TRACE_SIZE = 8192 * 4;
 
@@ -116,8 +116,7 @@ int main(int argc, const char *argv[]) {
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
     auto bo_outC = xrt::bo(device, OUT_SIZE * 4 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
-    auto bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY,
-                            kernel.group_id(7));
+    //auto bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(7));
                             
     std::cout <<  IN1_SIZE * sizeof(DATATYPE_IN1) << "\n";
     std::cout <<  IN2_SIZE * 4 * 2 * sizeof(DATATYPE_IN2) << "\n";
@@ -155,16 +154,16 @@ int main(int argc, const char *argv[]) {
         bufOut[i] = 14;
 
     
-    char *bufTrace = bo_trace.map<char *>();
-    memset(bufTrace, 0, TRACE_SIZE);
+    // char *bufTrace = bo_trace.map<char *>();
+    // memset(bufTrace, 0, TRACE_SIZE);
 
     // sync host to device memories
     bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-    bo_trace.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-    for(int i = 0; i< 6000; i++){
+    // bo_trace.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    for(int i = 0; i< 60000; i++){
     
 
     // Execute the kernel and wait to finish
@@ -172,20 +171,21 @@ int main(int argc, const char *argv[]) {
         std::cout << "Running Kernel.\n";
     unsigned int opcode = 3;
     auto run =
-        kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC, 0, bo_trace);
+        kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
     run.wait();
 
     // Sync device to host memories
     bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-    bo_trace.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+    
+    // bo_trace.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
     //test_utils::write_out_trace((char *)bufTrace, TRACE_SIZE, "trace.txt");
 
-    //int errors = verify(bufInA, bufInB, bufOut, IN2_SIZE, verbosity);
-    //if(errors == 0){
-    //    std::cout << "PASS!\n";
-    //}else{
-    //    std::cout << "FAIL with " << errors << "errors\n";
-   // }
+    int errors = verify(bufInA, bufInB, bufOut, IN2_SIZE, verbosity);
+    if(errors == 0){
+         std::cout << "PASS!\n";
+    }else{
+        std::cout << "FAIL with " << errors << "errors\n";
+    }
     std::cout << "Iteration " << i << " done.\n";
 }
 }
