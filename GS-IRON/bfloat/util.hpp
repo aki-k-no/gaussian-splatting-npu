@@ -1,0 +1,19 @@
+#ifndef UTIL_H
+#define UTIL_H  
+#include <array>
+#include <cstdint>
+#include <Eigen/Dense>
+
+void getRelatedTiles(const std::array<float, 2>& screen_coord, int max_radius,std::array<float, 2>& min_bound, std::array<float, 2>& max_bound, std::array<int, 2>& grid_bound);
+
+Eigen::Matrix4f getProjMat(const float zfar, const float znear, const float fovX, const float fovY);
+
+float float_to_bfloat16_scale(float value);
+
+Eigen::Vector4f float_to_bfloat_vec4f(Eigen::Vector4f value);
+Eigen::Vector3f float_to_bfloat_vec3f(Eigen::Vector3f value);
+
+Eigen::Matrix4f float_to_bfloat_mat4f(Eigen::Matrix4f value);
+Eigen::Matrix3f float_to_bfloat_mat3f(Eigen::Matrix3f value);
+
+#endif // UTIL_H

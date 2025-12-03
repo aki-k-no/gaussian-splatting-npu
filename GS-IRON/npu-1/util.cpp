@@ -39,3 +39,4 @@ Eigen::Matrix4f getProjMat(const float zfar, const float znear, const float fovX
     P(2, 3) = -(zfar * znear) / (zfar - znear);
     return P;
 }
+

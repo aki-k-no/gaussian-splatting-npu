@@ -11,6 +11,7 @@
 // #define NOCPP
 
 #include <aie_api/aie.hpp>
+#include <aie_api/detail/aie2/transpose.hpp>
 #include <stdint.h>
 // #include <stdio.h>
 // #include <stdlib.h>
@@ -24,46 +25,46 @@ const int M=4;
 const int K=8;
 const int N=4;
 
+using bf16 = bfloat16;
+
+using MMUL = aie::mmul<4, 8, 4, bfloat16, bfloat16>;
 // projection from world to view space
 
 // note that size of proj mat is always 4x4, gaussian is 4xN
 template <const int GAUSSIAN_SIZE>
-void proj_to_view_space(float *restrict proj_mat, float *restrict gaussians, float *restrict output) {
-    // parallel factor
-
+void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 *restrict output) {    
     // load input data
-    aie::vector<float, 16> va = ::shuffle(aie::load_v<16>(proj_mat), T32_4x4);
+    aie::vector<bf16, 16> va = ::aie::load_v<16>(proj_mat);
+    aie::vector<bf16, 32> va_padded = aie::zeros<bf16, 32>();
+    for(size_t i=0;i<4;i++){
+        for(size_t j=0;j<4;j++){
+            va_padded[i * 8 + j] = va[i * 4 + j];
+        }
+    }
+    
+    int iter1 = 0;
+    int iter2 = 0;
 
-    aie::vector<float, 16> x0 = ::shuffle(::extract_v4float_broadcast_to_v16float(va, 0), T32_4x4);
-    aie::vector<float, 16> x1 = ::shuffle(::extract_v4float_broadcast_to_v16float(va, 1), T32_4x4);
-    aie::vector<float, 16> x2 = ::shuffle(::extract_v4float_broadcast_to_v16float(va, 2), T32_4x4);
-    aie::vector<float, 16> x3 = ::shuffle(::extract_v4float_broadcast_to_v16float(va, 3), T32_4x4);
-    
-    
-    aie::accum<accfloat, 16> acc = aie::zeros<accfloat,16>();
-    
     AIE_PREPARE_FOR_PIPELINING
     AIE_LOOP_RANGE(GAUSSIAN_SIZE / 4, GAUSSIAN_SIZE / 4)
     // compute over all elements
     for (size_t i = 0; i < GAUSSIAN_SIZE / 4; i += 1) {
-        event0();
         //load elements
-        aie::vector<float, 16> y= aie::load_v<16>(gaussians + i * 16);
-        aie::vector<float, 16> y0 = ::extract_v4float_broadcast_to_v16float(y, 0);
-        aie::vector<float, 16> y1 = ::extract_v4float_broadcast_to_v16float(y, 1);
-        aie::vector<float, 16> y2 = ::extract_v4float_broadcast_to_v16float(y, 2);
-        aie::vector<float, 16> y3 = ::extract_v4float_broadcast_to_v16float(y, 3);
-        
-        event1();
-        acc =  aie::zeros<accfloat,16>();
+        event0();
 
-        acc = ::mul_elem_16(x0, y0);
-        acc = ::mac_elem_16(x1, y1, acc);
-        acc = ::mac_elem_16(x2, y2, acc);
-        acc = ::mac_elem_16(x3, y3, acc);
+        aie::vector<bf16, 32> y_padded= aie::load_v<32>(gaussians + iter1);
+        event1();
+
         
+        MMUL mmul;
+
+        mmul.mac(va_padded,y_padded);
+
         // store data
-        aie::store_v(output + i * 16, acc.to_vector<float>());
+        aie::store_v(output + iter2,mmul.to_vector<bf16>());
+        iter1 += 32;
+        iter2 += 16;
+        
         
     }
 
@@ -72,38 +73,39 @@ void proj_to_view_space(float *restrict proj_mat, float *restrict gaussians, flo
 
 // projection from world to camera
 template <const int GAUSSIAN_SIZE>
-void get_camera_pos(float* restrict camera_mat, float *restrict gaussians, float *restrict output){
+void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *restrict output){
     // load input data
-    aie::vector<float, 16> va = ::shuffle(aie::load_v<16>(camera_mat), T32_4x4);
+    aie::vector<bf16, 16> va = ::aie::load_v<16>(camera_mat);
+    aie::vector<bf16, 32> va_padded = aie::zeros<bf16, 32>();
+    for(size_t i=0;i<4;i++){
+        for(size_t j=0;j<4;j++){
+            va_padded[i * 8 + j] = va[i * 4 + j];
+        }
+    }
+    
+    int iter1 = 0;
+    int iter2 = 0;
 
-    aie::vector<float, 16> x0 = ::shuffle(::extract_v4float_broadcast_to_v16float(va, 0), T32_4x4);
-    aie::vector<float, 16> x1 = ::shuffle(::extract_v4float_broadcast_to_v16float(va, 1), T32_4x4);
-    aie::vector<float, 16> x2 = ::shuffle(::extract_v4float_broadcast_to_v16float(va, 2), T32_4x4);
-    aie::vector<float, 16> x3 = ::shuffle(::extract_v4float_broadcast_to_v16float(va, 3), T32_4x4);
-    
-    
-    aie::accum<accfloat, 16> acc = aie::zeros<accfloat,16>();
-    
     AIE_PREPARE_FOR_PIPELINING
     AIE_LOOP_RANGE(GAUSSIAN_SIZE / 4, GAUSSIAN_SIZE / 4)
     // compute over all elements
     for (size_t i = 0; i < GAUSSIAN_SIZE / 4; i += 1) {
         //load elements
-        aie::vector<float, 16> y=aie::load_v<16>(gaussians + i * 16);
-        aie::vector<float, 16> y0 = ::extract_v4float_broadcast_to_v16float(y, 0);
-        aie::vector<float, 16> y1 = ::extract_v4float_broadcast_to_v16float(y, 1);
-        aie::vector<float, 16> y2 = ::extract_v4float_broadcast_to_v16float(y, 2);
-        aie::vector<float, 16> y3 = ::extract_v4float_broadcast_to_v16float(y, 3);
-        
-        acc =  aie::zeros<accfloat,16>();
+        event0();
 
-        acc = ::mul_elem_16(x0, y0);
-        acc = ::mac_elem_16(x1, y1, acc);
-        acc = ::mac_elem_16(x2, y2, acc);
-        acc = ::mac_elem_16(x3, y3, acc);
+        aie::vector<bf16, 32> y_padded= aie::load_v<32>(gaussians + iter1);
+        event1();
+
         
+        MMUL mmul;
+
+        mmul.mac(va_padded,y_padded);
+
         // store data
-        aie::store_v(output + i * 16, acc.to_vector<float>());
+        aie::store_v(output + iter2,mmul.to_vector<bf16>());
+        iter1 += 32;
+        iter2 += 16;
+        
         
     }
 
@@ -113,6 +115,8 @@ void get_camera_pos(float* restrict camera_mat, float *restrict gaussians, float
 
 extern "C" {
 
-void f32_proj_to_view_space(float *proj_in, float *gaussian_in, float *out) { proj_to_view_space<64>(proj_in, gaussian_in, out); }
+void f32_proj_to_view_space(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { proj_to_view_space<64>(proj_in, gaussian_in, out); }
+
+void f32_get_camera_pos(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { get_camera_pos<64>(proj_in, gaussian_in, out); }
 
 } // extern "C"

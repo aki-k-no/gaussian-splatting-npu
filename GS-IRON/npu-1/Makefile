@@ -4,7 +4,7 @@ include ${srcdir}/../makefile-common
 
 # compiler and flags
 CC = g++-13
-CFLAGS = -Wall -O2
+CXXFLAGS = -std=c++23 -Wall -O2 -Wno-deprecated-enum-enum-conversion -g -fsanitize=address -fsanitize=undefined
 
 #include paths
 XRT_INC_DIR = /opt/xilinx/xrt/include
@@ -52,12 +52,13 @@ $(TARGET): $(OBJS)
 #endif
 
 %.o: %.cpp
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 cp :
 	cp -r NPU/build/ ./
 
 run: $(TARGET)
+	export LSAN_OPTIONS=verbosity=1:log_threads=1
 	${powershell} ./$< -x build/final_precomp.xclbin -i build/insts_precomp.bin -k MLIR_AIE
 
 clean:

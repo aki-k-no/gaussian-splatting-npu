@@ -4,6 +4,9 @@
 #include <vector>
 #include <cstdint>
 #include <Eigen/Dense>
+#include <stdfloat>
+#include <type_traits>
+
 // Structure representing a single 3D Gaussian for splatting
 struct Gaussian3D {
     Eigen::Vector3f xyz;           // x, y, z coordinates
@@ -22,7 +25,7 @@ struct Gaussian3D {
 // Container for loaded Gaussians
 struct GaussianGroup {
     std::vector<Gaussian3D> gaussians;
-    float* xyz_buf;
+    std::bfloat16_t* xyz_buf;
 };
 
 #endif // GAUSSIAN_H

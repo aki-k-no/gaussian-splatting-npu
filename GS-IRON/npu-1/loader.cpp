@@ -1,8 +1,10 @@
 #include "gaussian.hpp"
 #include "base.hpp"
+#include "util.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cstdint>
 
 GaussianGroup loadGaussiansFromFile(const std::string &filename) {
     // Gaussians
@@ -57,14 +59,18 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }
     }
 
-    group.xyz_buf = new float[(count / 256 + 1) * 256 * 4];
+    group.xyz_buf = new std::bfloat16_t[((count - 1)/ 128 + 1) * 128 * 8];
+    memset(group.xyz_buf, 0, (((count / 128 - 1) + 1) * 128 * 8) * sizeof(std::bfloat16_t));
+    int size = ((count / 128 - 1) + 1) * 128 * 8;
 
     // Read Gaussian data
     for(int i=0;i<count;i++){
         
-        int loop_itr = i / 4 * 16;
+        int loop_itr = i / 4 * 32;
         int loop_res = i % 4;
         int loop_id = loop_itr + loop_res;
+
+
         
         #ifdef __USE_NPU
         group.xyz_buf[loop_id + 12] = 1;
@@ -85,26 +91,26 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             // set property to gaussian
             if(propName == "x"){
                 #ifdef __USE_NPU
-                group.xyz_buf[loop_id] = value;
+                group.xyz_buf[loop_id] = float_to_bfloat16(value);
                 #else
-                gaussian.xyz[0] = value;
                 #endif
+                gaussian.xyz[0] = value;
             }else if(propName == "y"){
                 
                 #ifdef __USE_NPU
-                group.xyz_buf[loop_id + 4] = value;
+                group.xyz_buf[loop_id + 4] = float_to_bfloat16(value);
                 #else
-                gaussian.xyz[1] = value;
                 #endif
+                gaussian.xyz[1] = value;
                 
 
             }else if(propName == "z"){
                 
                 #ifdef __USE_NPU
-                group.xyz_buf[loop_id + 8] = value;
+                group.xyz_buf[loop_id + 8] = float_to_bfloat16(value);
                 #else
-                gaussian.xyz[2] = value;
                 #endif
+                gaussian.xyz[2] = value;
             //note that these scalings are log-based
             }else if(propName == "scale_0"){
                 gaussian.scale[0] = value;

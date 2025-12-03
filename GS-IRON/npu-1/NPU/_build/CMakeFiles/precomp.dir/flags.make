@@ -6,5 +6,5 @@ CXX_DEFINES =
 
 CXX_INCLUDES = -I/opt/xilinx/xrt/include -I/home/okuno/bthesis2025/gaussian-splatting-npu/mlir-aie/ironenv/lib/python3.12/site-packages/mlir_aie/runtime_lib -I/home/okuno/bthesis2025/gaussian-splatting-npu/mlir-aie/ironenv/lib/python3.12/site-packages/mlir_aie/runtime_lib/x86_64/test_lib/include
 
-CXX_FLAGS = -std=gnu++23
+CXX_FLAGS = -g -std=gnu++23
 

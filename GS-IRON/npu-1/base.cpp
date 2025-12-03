@@ -46,19 +46,21 @@ xrt::bo bo_instr;
 xrt::bo bo_inA;
 xrt::bo bo_inB;
 xrt::bo bo_outC;
+xrt::bo bo_trace;
 void *bufInstr;
 DATATYPE_IN1 *bufInA;
 DATATYPE_IN2 *bufInB;
 DATATYPE_OUT *bufOut;
 
-int opcode = 3;
+unsigned int opcode = 3;
 
 void setup_npu(int argc, const char *argv[]){
 
     
-    const int IN1_SIZE = 4;
-    const int IN2_SIZE = 256;
-    const int OUT_SIZE = IN2_SIZE;
+    const int IN1_SIZE = 16 + 16;
+    const int IN2_SIZE = 128;
+    const int OUT_SIZE = IN2_SIZE + IN2_SIZE;
+    const int TRACE_SIZE = 8192 * 4;
 
     
     // Program arguments parsing
@@ -85,12 +87,17 @@ void setup_npu(int argc, const char *argv[]){
     // set up the buffer objects
     bo_instr = xrt::bo(device, instr_v.size() * sizeof(int),
                           XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
-    bo_inA = xrt::bo(device, IN1_SIZE * 4 * sizeof(DATATYPE_IN1),
+    bo_inA = xrt::bo(device, IN1_SIZE * sizeof(DATATYPE_IN1),
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-    bo_inB = xrt::bo(device, IN2_SIZE * 4 * sizeof(DATATYPE_IN2),
+    bo_inB = xrt::bo(device, IN2_SIZE * 8 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
     bo_outC = xrt::bo(device, OUT_SIZE * 4 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
+    bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY,
+                            kernel.group_id(7));
+                            
+    char *bufTrace = bo_trace.map<char *>();
+    memset(bufTrace, 0, TRACE_SIZE);
 
     bufInstr = bo_instr.map<void *>();
     memcpy(bufInstr, instr_v.data(), instr_v.size() * sizeof(int));
@@ -98,6 +105,7 @@ void setup_npu(int argc, const char *argv[]){
     bufInA = bo_inA.map<DATATYPE_IN1 *>();
     bufInB = bo_inB.map<DATATYPE_IN2 *>();
     bufOut = bo_outC.map<DATATYPE_OUT *>();
+
 
 
 }
@@ -129,9 +137,10 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
 
     // instead, calculate with NPU
     #ifdef __USE_NPU
-    for(int i=0; i < (numGaussians - 1) / 256 + 1; i++){
+    for(int i=0; i < (numGaussians - 1) / 128 / 2 + 1; i++){
+
         //copy the data first
-        memcpy(bufInB, group.xyz_buf + i * 256 * 4, 256 * 4 * sizeof(DATATYPE_IN2));
+        memcpy(bufInB, group.xyz_buf + i * 128 * 8, 128 * 8 * sizeof(DATATYPE_IN2));
 
         
 
@@ -139,25 +148,27 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-        auto run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
+        bo_trace.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+        
+        auto run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC, 0, bo_trace);
         run.wait();
-        if(i==0){
-            std::cout << bufInB[256] << " " << bufInA[1] << "\n";
-            std::cout << bufOut[256] << " " << bufOut[4] << "\n";
-        }
-
+        
         // Sync device to host memories
         bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+        bo_trace.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
 
         // extract the data and save
-        for(int j = 0;j<64;j++){
+        for(int j = 0;j<32;j++){
             for(int k = 0; k < 4; k++){
+                if(i * 128 + j * 4 + k >= numGaussians)
+                    break;
                 // save to gaussians, for now...
-                Gaussian3D &g = group.gaussians[i*256 + j * 4 + k];
+                Gaussian3D &g = group.gaussians[i*128 + j * 4 + k];
                 
-                g.xyz_view[0] = bufOut[j*16 + k];
-                g.xyz_view[1] = bufOut[j*16 + k + 4];
-                g.xyz_view[2] = bufOut[j*16 + k + 8];
+                g.xyz_view[0] = bfloat16_to_float(bufOut[j*16 + k]);
+                g.xyz_view[1] = bfloat16_to_float(bufOut[j*16 + k + 4]);
+                g.xyz_view[2] = bfloat16_to_float(bufOut[j*16 + k + 8]);
+                
 
             }
         }
@@ -311,6 +322,10 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         g.color = colors;
 
     }
+    
+    auto middle = std::chrono::steady_clock::now();
+    auto diff_mid = std::chrono::duration_cast<std::chrono::microseconds>(middle - start);
+    std::cout << "Elapsed at middle" << diff_mid.count() << " micro sec\n";
 
     // sort gaussians in each tile based on depth
     for(int tx=0;tx<grid[0];tx++){
@@ -329,7 +344,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     }
 
     // rendering
-    cv::Mat image(cam.height, cam.width, CV_32FC3, cv::Scalar(0,0,0));
+    // cv::Mat image(cam.height, cam.width, CV_32FC3, cv::Scalar(0,0,0));
 
     for(int tx=0;tx<grid[0];tx++){
         for(int ty=0;ty<grid[1];ty++){
@@ -377,7 +392,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     pixel_color[2] = std::max(0.0f, pixel_color[2]);   
                            
                     // store to buffer
-                    image.at<cv::Vec3f>(pixel_y, pixel_x) = cv::Vec3f(pixel_color[2], pixel_color[1], pixel_color[0]);
+                    // image.at<cv::Vec3f>(pixel_y, pixel_x) = cv::Vec3f(pixel_color[2], pixel_color[1], pixel_color[0]);
                 }
             }
         }
@@ -388,14 +403,18 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     std::cout << "Elapsed" << diff.count() << " micro sec\n";
 
     //output to file
-    cv::Mat display;
-    image.convertTo(display, CV_8UC3, 255.0);
-    cv::imwrite(img_name, display);
+    // cv::Mat display;
+    // image.convertTo(display, CV_8UC3, 255.0);
+    // cv::imwrite(img_name, display);
+
+    delete[] group.xyz_buf;
+    group.xyz_buf = nullptr;
 
 }
 
 
 int main(int argc, const char *argv[]){
+
 
     Eigen::Matrix4f baseMat_W2C;
     baseMat_W2C << -0.9250140190124512f, -0.2748899757862091f, 0.2622683644294739f, -1.0572376251220703f,
