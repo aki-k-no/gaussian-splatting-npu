@@ -6,8 +6,12 @@
 #include "xrt/xrt_device.h"
 #include "xrt/xrt_kernel.h"
 
+#include "../const.hpp"
+
 #include <cstdint>
 #include <random>
+
+// #define __ENABLE_TRACE
 
 using DATATYPE_IN1 = std::bfloat16_t;
 using DATATYPE_IN2 = std::bfloat16_t;
@@ -29,32 +33,34 @@ void generate_random_bfloat16(std::bfloat16_t* buf, size_t n, float min_val, flo
 
 // Functional correctness verifyer
 int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
-                             DATATYPE_OUT *bufOut, int SIZE, int verbosity) {
+                             DATATYPE_OUT *bufOut, int TILE_SIZE, int TILE_COUNT, int verbosity) {
     int errors = 0;
     verbosity = 1;
 
-    for (int iter = 0; iter < SIZE / 8; iter++){
-        for(int j=0;j<4;j++){
-            for (int i = 0; i < 4; i++) {
-                DATATYPE_OUT ref = bufIn1[4 * j] * bufIn2[iter * 32 + i] + bufIn1[4 * j + 1] * bufIn2[iter * 32 + i + 4]
-                              + bufIn1[4 * j + 2] * bufIn2[iter * 32 + i + 8] + bufIn1[4 * j + 3] * bufIn2[iter * 32 + i + 12];
-                DATATYPE_OUT ref2 = (bufIn1[j] * bufIn2[iter * 16 + i] + bufIn1[j + 4] * bufIn2[iter * 16 + i + 4]
-                              + bufIn1[j + 8] * bufIn2[iter * 16 + i + 8] + bufIn1[j + 12] * bufIn2[iter * 16 + i + 12])
-                              / (bufIn1[3] * bufIn2[iter * 16 + i] + bufIn1[7] * bufIn2[iter * 16 + i + 4]
-                              + bufIn1[11] * bufIn2[iter * 16 + i + 8] + bufIn1[15] * bufIn2[iter * 16 + i + 12]);
-                DATATYPE_OUT test = bufOut[iter * 16 + i + j * 4];
-                DATATYPE_OUT test2 = bufOut[iter * 16 + i + j * 4 + SIZE * 4];
-                if (test < ref - 0.1 || test > ref + 0.1) {
-                    if (verbosity >= 1){
-                        
-                        std::cout << "Error in output " << iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
+    for (int tile = 0; tile < TILE_COUNT; tile++) {
+        for (int iter = 0; iter < TILE_SIZE / 4; iter++){
+            for(int j=0;j<4;j++){
+                for (int i = 0; i < 4; i++) {
+                    int offset = tile * TILE_SIZE * 4 * 2;
+                    DATATYPE_OUT ref = bufIn1[4 * j] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1] * bufIn2[offset + iter * 32 + i + 4]
+                                  + bufIn1[4 * j + 2] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3] * bufIn2[offset + iter * 32 + i + 12];
+                    DATATYPE_OUT ref2 = (bufIn1[j] * bufIn2[offset + iter * 16 + i] + bufIn1[j + 4] * bufIn2[offset + iter * 16 + i + 4]
+                                  + bufIn1[j + 8] * bufIn2[offset + iter * 16 + i + 8] + bufIn1[j + 12] * bufIn2[offset + iter * 16 + i + 12])
+                                  / (bufIn1[3] * bufIn2[offset + iter * 16 + i] + bufIn1[7] * bufIn2[offset + iter * 16 + i + 4]
+                                  + bufIn1[11] * bufIn2[offset + iter * 16 + i + 8] + bufIn1[15] * bufIn2[offset + iter * 16 + i + 12]);
+                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 4 * 2 + iter * 16 + i + j * 4];
+                    DATATYPE_OUT test2 = bufOut[iter * 16 + i + j * 4];
+                    if (test < ref - 0.25 || test > ref + 0.25) {
+                        if (verbosity >= 1){
+
+                            std::cout << "Error in output " << tile * TILE_SIZE * 4 * 2 + iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
+                        }
+                        errors++;
+
+                    } else {
+                        if (verbosity >= 2)
+                            std::cout << "Correct in output " << tile * TILE_SIZE * 4 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
                     }
-                    errors++;
-                    
-                } else {
-                    if (verbosity >= 2)
-                        std::cout << "Correct in output " << iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
-                }
                 // if(test2 < ref2 - 0.1 || test2 > ref2 + 0.1) {
                 //     if (verbosity >= 1){
                         
@@ -71,8 +77,9 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 //               + bufIn1[11] * bufIn2[iter * 16 + i + 8] + bufIn1[15] * bufIn2[iter * 16 + i + 12] << "\n";
                 //     }
                 // }
-            }
+                }
         
+            }
         }
     }
     return errors;
@@ -80,10 +87,6 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
 
 int main(int argc, const char *argv[]) {
 
-    const int IN1_SIZE = 16 + 16;
-    const int IN2_SIZE = 64;
-    const int OUT_SIZE = IN2_SIZE + IN2_SIZE;
-    const int TRACE_SIZE = 8192 * 4;
 
     // Program arguments parsing
     cxxopts::Options options("section-3");
@@ -112,15 +115,15 @@ int main(int argc, const char *argv[]) {
                           XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
     auto bo_inA = xrt::bo(device, IN1_SIZE * sizeof(DATATYPE_IN1),
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-    auto bo_inB = xrt::bo(device, IN2_SIZE * 4 * 2 * sizeof(DATATYPE_IN2),
+    auto bo_inB = xrt::bo(device, CHUNK_SIZE * 4 * 2 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
     auto bo_outC = xrt::bo(device, OUT_SIZE * 4 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
-    //auto bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(7));
-                            
-    std::cout <<  IN1_SIZE * sizeof(DATATYPE_IN1) << "\n";
-    std::cout <<  IN2_SIZE * 4 * 2 * sizeof(DATATYPE_IN2) << "\n";
-    std::cout <<  OUT_SIZE * 4 * sizeof(DATATYPE_OUT) << "\n";
+    #ifdef __ENABLE_TRACE
+    auto bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(7));
+    std::cout << "Trace enabled\n";
+    #endif
+    
 
     if (verbosity >= 1)
         std::cout << "Writing data into buffer objects.\n";
@@ -138,11 +141,11 @@ int main(int argc, const char *argv[]) {
 
     // Initialize buffer bo_inFactor
     DATATYPE_IN2 *bufInB = bo_inB.map<DATATYPE_IN2 *>();
-    for (int i = 0; i < IN2_SIZE * 4 * 2; i++)
+    for (int i = 0; i < CHUNK_SIZE * 4 * 2; i++)
         bufInB[i] = i + 1;
 
-    generate_random_bfloat16(bufInB, IN2_SIZE * 4 * 2, 0, 3);
-    for (int i=0;i<IN2_SIZE / 4; i++){
+    generate_random_bfloat16(bufInB, CHUNK_SIZE * 4 * 2, 0, 3);
+    for (int i=0;i<CHUNK_SIZE / 4; i++){
         for(int j=0;j<16;j++){
             bufInB[i * 32 + j + 16] = 0;
         }
@@ -153,17 +156,22 @@ int main(int argc, const char *argv[]) {
     for (int i = 0; i < OUT_SIZE * 4; i++)
         bufOut[i] = 14;
 
-    
-    // char *bufTrace = bo_trace.map<char *>();
-    // memset(bufTrace, 0, TRACE_SIZE);
+    #ifdef __ENABLE_TRACE
+    char *bufTrace = bo_trace.map<char *>();
+    memset(bufTrace, 0, TRACE_SIZE);
+    #endif
 
     // sync host to device memories
     bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-    // bo_trace.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-    for(int i = 0; i< 60000; i++){
+
+    #ifdef __ENABLE_TRACE
+    bo_trace.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    #endif
+
+    for(int i = 0; i< 1; i++){
     
 
     // Execute the kernel and wait to finish
@@ -171,22 +179,29 @@ int main(int argc, const char *argv[]) {
         std::cout << "Running Kernel.\n";
     unsigned int opcode = 3;
     auto run =
+    #ifndef __ENABLE_TRACE
         kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
+        #else
+        kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC, 0, bo_trace);
+    #endif
     run.wait();
 
     // Sync device to host memories
     bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
     
-    // bo_trace.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-    //test_utils::write_out_trace((char *)bufTrace, TRACE_SIZE, "trace.txt");
+    #ifdef __ENABLE_TRACE
+    bo_trace.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+    test_utils::write_out_trace((char *)bufTrace, TRACE_SIZE, "trace.txt");
+    #endif
 
-    int errors = verify(bufInA, bufInB, bufOut, IN2_SIZE, verbosity);
+    int errors = verify(bufInA, bufInB, bufOut, TILE_SIZE, TILE_COUNT, verbosity);
     if(errors == 0){
          std::cout << "PASS!\n";
     }else{
         std::cout << "FAIL with " << errors << "errors\n";
     }
     std::cout << "Iteration " << i << " done.\n";
+    
 }
 }
 

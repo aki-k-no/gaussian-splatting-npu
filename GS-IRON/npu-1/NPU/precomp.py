@@ -36,8 +36,8 @@ def precomp(dev):
     def device_body():
         
         # Define tensor types
-        line_size = 64
-        sub_tiles = 1
+        line_size = 128 * 256
+        sub_tiles = line_size // 128
         world_to_view_size = 4 * 4
         get_camera_size = 4 * 4
         w2v_ty = np.ndarray[(world_to_view_size,), np.dtype[xfr_dtype]]
@@ -81,7 +81,7 @@ def precomp(dev):
         def core_body_v2w():
             for _ in range_(0xFFFFFFFF):
                 elemIn1 = of_w2v.acquire(ObjectFifoPort.Consume, 1)
-                for _ in range_(1):
+                for _ in range_(sub_tiles):
                     elemOut = of_out1.acquire(ObjectFifoPort.Produce, 1)
                     elemIn2 = of_gaussian.acquire(ObjectFifoPort.Consume, 1)
                     w2v_func(elemIn1, elemIn2, elemOut)
@@ -96,7 +96,7 @@ def precomp(dev):
         def core_body_camera():
             for _ in range_(0xFFFFFFFF):
                 elemIn1 = of_camera.acquire(ObjectFifoPort.Consume, 1)
-                for _ in range_(1):
+                for _ in range_(sub_tiles):
                     elemOut = of_out2.acquire(ObjectFifoPort.Produce, 1)
                     elemIn2 = of_gaussian.acquire(ObjectFifoPort.Consume, 1)
                     camera_func(elemIn1, elemIn2, elemOut)
@@ -127,6 +127,8 @@ def precomp(dev):
             dma_start_task(import_task, gaussian_task, out_task)
             dma_await_task(out_task)
             dma_free_task(import_task, gaussian_task)
+            if trace_size > 0:
+                trace_utils.gen_trace_done_aie2(ShimTile0)
     
 
 

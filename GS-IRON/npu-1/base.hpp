@@ -1,7 +1,7 @@
 #ifndef BASE_HPP
 #define BASE_HPP
 
-// #define __USE_NPU
+#define __USE_NPU
 
 
 #include "xrt/xrt_bo.h"
@@ -28,4 +28,6 @@ extern void *bufInstr;
 extern DATATYPE_IN1 *bufInA;
 extern DATATYPE_IN2 *bufInB;
 extern DATATYPE_OUT *bufOut;
+
+
 #endif

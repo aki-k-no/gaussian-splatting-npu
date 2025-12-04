@@ -34,7 +34,7 @@ using MMUL = aie::mmul<4, 8, 4, bfloat16, bfloat16>;
 template <const int GAUSSIAN_SIZE>
 void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 *restrict output) {    
     // load input data
-    aie::vector<bf16, 16> va = ::aie::load_v<16>(proj_mat);
+    aie::vector<bf16, 32> va = ::aie::load_v<32>(proj_mat);
     aie::vector<bf16, 32> va_padded = aie::zeros<bf16, 32>();
     for(size_t i=0;i<4;i++){
         for(size_t j=0;j<4;j++){
@@ -42,26 +42,40 @@ void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 
         }
     }
     
-    int iter1 = 0;
-    int iter2 = 0;
+    
 
     AIE_PREPARE_FOR_PIPELINING
     AIE_LOOP_RANGE(GAUSSIAN_SIZE / 4, GAUSSIAN_SIZE / 4)
     // compute over all elements
     for (size_t i = 0; i < GAUSSIAN_SIZE / 4; i += 1) {
         //load elements
-       
-        aie::vector<bf16, 32> y_padded= aie::load_v<32>(gaussians + iter1);
+        aie::vector<bf16, 32> y_padded1= aie::load_v<32>(gaussians);
+        // aie::vector<bf16, 32> y_padded2= aie::load_v<32>(gaussians + 32);
+        // aie::vector<bf16, 32> y_padded3= aie::load_v<32>(gaussians + 64);
+        // aie::vector<bf16, 32> y_padded4= aie::load_v<32>(gaussians + 96);
+
 
         
-        MMUL mmul;
+        MMUL mmul1;
+        // MMUL mmul2;
+        // MMUL mmul3;
+        // MMUL mmul4;
 
-        mmul.mac(va_padded,y_padded);
+        mmul1.mac(va_padded,y_padded1);
+        // mmul2.mac(va_padded,y_padded2);
+        // mmul3.mac(va_padded,y_padded3);
+        // mmul4.mac(va_padded,y_padded4);
+
+        
+
+        aie::store_v(output, mmul1.to_vector<bf16>());
+        // aie::store_v(output + 16, mmul2.to_vector<bf16>());
+        // aie::store_v(output + 32, mmul3.to_vector<bf16>());
+        // aie::store_v(output + 48, mmul4.to_vector<bf16>());
 
         // store data
-        aie::store_v(output + iter2, mmul.to_vector<bf16>());
-        iter1 += 32;
-        iter2 += 16;
+        gaussians += 32;
+        output += 16;
         
         
     }
@@ -72,8 +86,64 @@ void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 
 // projection from world to camera
 template <const int GAUSSIAN_SIZE>
 void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *restrict output){
-    // load input data
+    // // load input data
     
+    // // load input data
+    // aie::vector<bf16, 16> va = ::aie::load_v<16>(camera_mat);
+    // aie::vector<bf16, 32> va_padded = aie::zeros<bf16, 32>();
+    // for(size_t i=0;i<4;i++){
+    //     for(size_t j=0;j<4;j++){
+    //         va_padded[i * 8 + j] = va[i * 4 + j];
+    //     }
+    // }
+    
+    //            event0();
+    //     aie::vector<bf16, 32> y_padded1= aie::load_v<32>(gaussians);
+    //     aie::vector<bf16, 32> y_padded2= aie::load_v<32>(gaussians + 32);
+    //     aie::vector<bf16, 32> y_padded3= aie::load_v<32>(gaussians + 64);
+    //     aie::vector<bf16, 32> y_padded4= aie::load_v<32>(gaussians + 96);
+    //            event1();
+    
+    //     MMUL mmul1;
+    //     MMUL mmul2;
+    //     MMUL mmul3;
+    //     MMUL mmul4;
+
+    // AIE_PREPARE_FOR_PIPELINING
+    // AIE_LOOP_RANGE(GAUSSIAN_SIZE / 16, GAUSSIAN_SIZE / 16)
+    // // compute over all elements
+    // for (size_t i = 0; i < GAUSSIAN_SIZE / 16; i += 1) {
+    //     //load elements
+    //     gaussians += 128;
+
+
+        
+
+    //     mmul1.mul(va_padded,y_padded1);
+
+    //     mmul2.mul(va_padded,y_padded2);
+
+    //     mmul3.mul(va_padded,y_padded3);
+
+    //     mmul4.mul(va_padded,y_padded4);
+
+        
+    //     y_padded1= aie::load_v<32>(gaussians);
+    //     y_padded2= aie::load_v<32>(gaussians + 32);
+    //     y_padded3= aie::load_v<32>(gaussians + 64);
+    //     y_padded4= aie::load_v<32>(gaussians + 96);
+
+    //     aie::store_v(output, mmul1.to_vector<bf16>());
+    //     aie::store_v(output + 16, mmul2.to_vector<bf16>());
+    //     aie::store_v(output + 32, mmul3.to_vector<bf16>());
+    //     aie::store_v(output + 48, mmul4.to_vector<bf16>());
+
+    //     // store data
+    //     output += 64;
+        
+        
+    // }
+
 
     return;
 
@@ -81,8 +151,8 @@ void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *r
 
 extern "C" {
 
-void f32_proj_to_view_space(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { proj_to_view_space<64>(proj_in, gaussian_in, out); }
+void f32_proj_to_view_space(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { proj_to_view_space<128>(proj_in, gaussian_in, out); }
 
-void f32_get_camera_pos(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { get_camera_pos<64>(proj_in, gaussian_in, out); }
+void f32_get_camera_pos(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { get_camera_pos<128>(proj_in, gaussian_in, out); }
 
 } // extern "C"

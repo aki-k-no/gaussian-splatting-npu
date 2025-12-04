@@ -4,7 +4,7 @@ include ${srcdir}/../makefile-common
 
 # compiler and flags
 CC = g++-13
-CXXFLAGS = -std=c++23 -Wall -O2 -Wno-deprecated-enum-enum-conversion -g -fsanitize=address -fsanitize=undefined
+CXXFLAGS = -std=c++23 -Wall -O2 -Wno-deprecated-enum-enum-conversion # -g -fsanitize=address -fsanitize=undefined
 
 #include paths
 XRT_INC_DIR = /opt/xilinx/xrt/include

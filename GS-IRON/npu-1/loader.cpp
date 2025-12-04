@@ -1,6 +1,7 @@
 #include "gaussian.hpp"
 #include "base.hpp"
 #include "util.hpp"
+#include "const.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -59,9 +60,9 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }
     }
 
-    group.xyz_buf = new std::bfloat16_t[((count - 1)/ 128 + 1) * 128 * 8];
-    memset(group.xyz_buf, 0, (((count / 128 - 1) + 1) * 128 * 8) * sizeof(std::bfloat16_t));
-    int size = ((count / 128 - 1) + 1) * 128 * 8;
+    group.xyz_buf = new std::bfloat16_t[((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE * 8];
+    memset(group.xyz_buf, 0, (((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 8) * sizeof(std::bfloat16_t));
+    int size = ((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 8;
 
     // Read Gaussian data
     for(int i=0;i<count;i++){

@@ -57,12 +57,6 @@ unsigned int opcode = 3;
 void setup_npu(int argc, const char *argv[]){
 
     
-    const int IN1_SIZE = 16 + 16;
-    const int IN2_SIZE = 128;
-    const int OUT_SIZE = IN2_SIZE + IN2_SIZE;
-    const int TRACE_SIZE = 8192 * 4;
-
-    
     // Program arguments parsing
     cxxopts::Options options("section-3");
     test_utils::add_default_options(options);
@@ -89,15 +83,11 @@ void setup_npu(int argc, const char *argv[]){
                           XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
     bo_inA = xrt::bo(device, IN1_SIZE * sizeof(DATATYPE_IN1),
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-    bo_inB = xrt::bo(device, IN2_SIZE * 8 * sizeof(DATATYPE_IN2),
+    bo_inB = xrt::bo(device, CHUNK_SIZE * 8 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
     bo_outC = xrt::bo(device, OUT_SIZE * 4 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
-    bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY,
-                            kernel.group_id(7));
                             
-    char *bufTrace = bo_trace.map<char *>();
-    memset(bufTrace, 0, TRACE_SIZE);
 
     bufInstr = bo_instr.map<void *>();
     memcpy(bufInstr, instr_v.data(), instr_v.size() * sizeof(int));
@@ -134,46 +124,62 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
 
     
     int numGaussians =  gaussians.size();
-
-    // instead, calculate with NPU
-    #ifdef __USE_NPU
-    for(int i=0; i < (numGaussians - 1) / 128 / 2 + 1; i++){
-
-        //copy the data first
-        memcpy(bufInB, group.xyz_buf + i * 128 * 8, 128 * 8 * sizeof(DATATYPE_IN2));
-
-        
-
         bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-        bo_trace.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+
+    // instead, calculate with NPU
+    #ifdef __USE_NPU
+    auto start_npu_all = std::chrono::steady_clock::now();
+    
+    uint32_t tmp = 0;
+    for(int i=0; i < (numGaussians - 1) / CHUNK_SIZE + 1; i++){
+
+        //copy the data first
+        memcpy(bufInB, group.xyz_buf + i * CHUNK_SIZE * 8, CHUNK_SIZE * 8 * sizeof(DATATYPE_IN2));
+        auto start_npu = std::chrono::steady_clock::now();
+        bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+
         
-        auto run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC, 0, bo_trace);
+
+        
+        auto run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
         run.wait();
         
         // Sync device to host memories
         bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-        bo_trace.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-
+        auto end_npu = std::chrono::steady_clock::now();
+        auto diff_npu = std::chrono::duration_cast<std::chrono::microseconds>(end_npu - start_npu);
+        tmp += diff_npu.count();
+        std::cout << "NPU Elapsed" << diff_npu.count() << " micro sec\n";
+    
         // extract the data and save
-        for(int j = 0;j<32;j++){
-            for(int k = 0; k < 4; k++){
-                if(i * 128 + j * 4 + k >= numGaussians)
-                    break;
-                // save to gaussians, for now...
-                Gaussian3D &g = group.gaussians[i*128 + j * 4 + k];
+        
+        for(int tile = 0; tile < TILE_COUNT; tile++){
+            for(int j = 0;j<32;j++){
+                for(int k = 0; k < 4; k++){
+                    if(i * CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k >= numGaussians)
+                        break;
+                    // save to gaussians, for now...
+                    Gaussian3D &g = group.gaussians[i*CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k];
                 
-                g.xyz_view[0] = bfloat16_to_float(bufOut[j*16 + k]);
-                g.xyz_view[1] = bfloat16_to_float(bufOut[j*16 + k + 4]);
-                g.xyz_view[2] = bfloat16_to_float(bufOut[j*16 + k + 8]);
+                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k]);
+                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k + 4]);
+                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k + 8]);
                 
 
+                }
             }
         }
 
+        
     }
+    auto end_npu_all = std::chrono::steady_clock::now();
+    auto diff_npu_all = std::chrono::duration_cast<std::chrono::microseconds>(end_npu_all - start_npu_all);
+    std::cout << "Total NPU Elapsed" << diff_npu_all.count() << " micro sec\n";
+        
+    std::cout << "NPU itself Elapsed" << tmp << " micro sec\n";
     #endif
 
     for(int i=0;i<numGaussians;i++){
@@ -344,7 +350,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     }
 
     // rendering
-    // cv::Mat image(cam.height, cam.width, CV_32FC3, cv::Scalar(0,0,0));
+    cv::Mat image(cam.height, cam.width, CV_32FC3, cv::Scalar(0,0,0));
 
     for(int tx=0;tx<grid[0];tx++){
         for(int ty=0;ty<grid[1];ty++){
@@ -392,7 +398,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     pixel_color[2] = std::max(0.0f, pixel_color[2]);   
                            
                     // store to buffer
-                    // image.at<cv::Vec3f>(pixel_y, pixel_x) = cv::Vec3f(pixel_color[2], pixel_color[1], pixel_color[0]);
+                    image.at<cv::Vec3f>(pixel_y, pixel_x) = cv::Vec3f(pixel_color[2], pixel_color[1], pixel_color[0]);
                 }
             }
         }
@@ -403,9 +409,9 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     std::cout << "Elapsed" << diff.count() << " micro sec\n";
 
     //output to file
-    // cv::Mat display;
-    // image.convertTo(display, CV_8UC3, 255.0);
-    // cv::imwrite(img_name, display);
+    cv::Mat display;
+    image.convertTo(display, CV_8UC3, 255.0);
+    cv::imwrite(img_name, display);
 
     delete[] group.xyz_buf;
     group.xyz_buf = nullptr;
