@@ -12,9 +12,20 @@ static inline float bfloat16_to_float(std::bfloat16_t bf16)
 {
     return static_cast<float>(bf16);
 }
+#include <bit>
+#include <cstdint>
 
+// Round a float to the nearest representable bfloat16 value (round-to-nearest-even)
+inline float round_to_bfloat16(float f) {
+    uint32_t x = std::bit_cast<uint32_t>(f);
+    uint32_t lsb = (x >> 16) & 1u;                // LSB of the bfloat16 mantissa (for ties-to-even)
+    uint32_t bias = 0x7FFFu + lsb;                // 0x7FFF for nearest, +lsb for ties-to-even
+    x += bias;
+    x &= 0xFFFF0000u;                             // zero out the lower 16 bits
+    return std::bit_cast<float>(x);
+}
 inline std::bfloat16_t float_to_bfloat16(float f) {
-    return static_cast<std::bfloat16_t>(f);
+    return static_cast<std::bfloat16_t>(round_to_bfloat16(f));
 }
 
 #endif // UTIL_H

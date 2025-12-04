@@ -343,12 +343,15 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
             // sort based on depth
             std::sort(tile.unsorted_gaussians.begin(), tile.unsorted_gaussians.end(),
                 [](Gaussian3D* a, Gaussian3D* b) {
-                    return a->xyz_view[2] < b->xyz_view[2];
+                    if(a->xyz_view[2] != b->xyz_view[2]){
+                        return a->xyz_view[2] < b->xyz_view[2];
+                    }
+                    // if tie, sort based on opacity
+                    return a->opacity < b->opacity;
                 });
             tile.sorted_gaussians = tile.unsorted_gaussians;
         }
     }
-
     // rendering
     cv::Mat image(cam.height, cam.width, CV_32FC3, cv::Scalar(0,0,0));
 
@@ -365,6 +368,8 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     Eigen::Vector3f pixel_color;
                     pixel_color << 0.f, 0.f, 0.f;
                     float pixel_opacity = 1.0f;
+                    
+                    int cnt = 0;
                     for(Gaussian3D* g_ptr : tile.sorted_gaussians){
                         Gaussian3D &g = *g_ptr;
                         // compute contribution to pixel
@@ -379,6 +384,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                         }
                         float weight = std::exp(exponent); // prevent overflow
                         float alpha = std::min(0.99f, g.opacity * weight);
+                        
             			if (alpha < 1.0f / 255.0f)
 			            	continue;
                         
