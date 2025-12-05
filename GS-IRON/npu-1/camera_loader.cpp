@@ -41,7 +41,7 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C){
     for(int i=0;i<4;i++){
         for(int j=0;j<4;j++){
             bufInA[i * 4 + j] = float_to_bfloat16(cam.world_to_view(i,j));
-            //bufInA[i * 8 + j + 4] = float_to_bfloat16(0); //padding
+            bufInA[i * 4 + 16 + j] = float_to_bfloat16(cam.full_proj(i,j));
         }
     }
     #endif

@@ -157,7 +157,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         // extract the data and save
         
         for(int tile = 0; tile < TILE_COUNT; tile++){
-            for(int j = 0;j<32;j++){
+            for(int j = 0;j<TILE_SIZE / 4;j++){
                 for(int k = 0; k < 4; k++){
                     if(i * CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k >= numGaussians)
                         break;
@@ -167,7 +167,10 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k]);
                     g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k + 4]);
                     g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k + 8]);
-                
+                    
+                    g.screen_coord[0] = ((bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + TILE_SIZE * 4 + j*16 + k])+ 1.0) * cam.width - 1.0) * 0.5;
+                    g.screen_coord[1] = ((bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + TILE_SIZE * 4 + j*16 + k + 4]) + 1.0) * cam.height - 1.0) * 0.5;
+                    
 
                 }
             }
@@ -183,6 +186,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     #endif
 
     for(int i=0;i<numGaussians;i++){
+        #ifndef __USE_NPU
         Gaussian3D &g = group.gaussians[i];
         // transform to view space
         Eigen::Vector4f pos_vec;
@@ -190,12 +194,10 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         Eigen::Vector4f pos_view = cam.full_proj * pos_vec;
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
-        #ifndef __USE_NPU
         g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
-        #endif
-        
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
+        #endif
 
         
         
@@ -347,6 +349,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                         return a->xyz_view[2] < b->xyz_view[2];
                     }
                     // if tie, sort based on opacity
+                    // lower is in front
                     return a->opacity < b->opacity;
                 });
             tile.sorted_gaussians = tile.unsorted_gaussians;

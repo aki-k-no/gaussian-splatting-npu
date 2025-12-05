@@ -42,40 +42,47 @@ void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 
         }
     }
     
+        aie::vector<bf16, 32> y_padded1= aie::load_v<32>(gaussians);
+        aie::vector<bf16, 32> y_padded2= aie::load_v<32>(gaussians + 32);
+        aie::vector<bf16, 32> y_padded3= aie::load_v<32>(gaussians + 64);
+        aie::vector<bf16, 32> y_padded4= aie::load_v<32>(gaussians + 96);
+
     
 
     AIE_PREPARE_FOR_PIPELINING
-    AIE_LOOP_RANGE(GAUSSIAN_SIZE / 4, GAUSSIAN_SIZE / 4)
+    AIE_LOOP_RANGE(GAUSSIAN_SIZE / 16, GAUSSIAN_SIZE / 16)
     // compute over all elements
-    for (size_t i = 0; i < GAUSSIAN_SIZE / 4; i += 1) {
+    for (size_t i = 0; i < GAUSSIAN_SIZE / 16; i += 1) {
         //load elements
-        aie::vector<bf16, 32> y_padded1= aie::load_v<32>(gaussians);
-        // aie::vector<bf16, 32> y_padded2= aie::load_v<32>(gaussians + 32);
-        // aie::vector<bf16, 32> y_padded3= aie::load_v<32>(gaussians + 64);
-        // aie::vector<bf16, 32> y_padded4= aie::load_v<32>(gaussians + 96);
-
 
         
         MMUL mmul1;
-        // MMUL mmul2;
-        // MMUL mmul3;
-        // MMUL mmul4;
+        MMUL mmul2;
+        MMUL mmul3;
+        MMUL mmul4;
 
         mmul1.mac(va_padded,y_padded1);
-        // mmul2.mac(va_padded,y_padded2);
-        // mmul3.mac(va_padded,y_padded3);
-        // mmul4.mac(va_padded,y_padded4);
+        mmul2.mac(va_padded,y_padded2);
+        mmul3.mac(va_padded,y_padded3);
+        mmul4.mac(va_padded,y_padded4);
+
+        gaussians += 128;
+        y_padded1= aie::load_v<32>(gaussians);
+        y_padded2= aie::load_v<32>(gaussians + 32);
+        y_padded3= aie::load_v<32>(gaussians + 64);
+        y_padded4= aie::load_v<32>(gaussians + 96);
+
+
 
         
 
         aie::store_v(output, mmul1.to_vector<bf16>());
-        // aie::store_v(output + 16, mmul2.to_vector<bf16>());
-        // aie::store_v(output + 32, mmul3.to_vector<bf16>());
-        // aie::store_v(output + 48, mmul4.to_vector<bf16>());
+        aie::store_v(output + 16, mmul2.to_vector<bf16>());
+        aie::store_v(output + 32, mmul3.to_vector<bf16>());
+        aie::store_v(output + 48, mmul4.to_vector<bf16>());
 
         // store data
-        gaussians += 32;
-        output += 16;
+        output += 64;
         
         
     }
@@ -88,61 +95,63 @@ template <const int GAUSSIAN_SIZE>
 void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *restrict output){
     // // load input data
     
-    // // load input data
-    // aie::vector<bf16, 16> va = ::aie::load_v<16>(camera_mat);
-    // aie::vector<bf16, 32> va_padded = aie::zeros<bf16, 32>();
-    // for(size_t i=0;i<4;i++){
-    //     for(size_t j=0;j<4;j++){
-    //         va_padded[i * 8 + j] = va[i * 4 + j];
-    //     }
-    // }
+    // load input data
+    aie::vector<bf16, 16> va = ::aie::load_v<16>(camera_mat);
+    aie::vector<bf16, 32> va_padded = aie::zeros<bf16, 32>();
+    for(size_t i=0;i<4;i++){
+        for(size_t j=0;j<4;j++){
+            va_padded[i * 8 + j] = va[i * 4 + j];
+        }
+    }
     
-    //            event0();
-    //     aie::vector<bf16, 32> y_padded1= aie::load_v<32>(gaussians);
-    //     aie::vector<bf16, 32> y_padded2= aie::load_v<32>(gaussians + 32);
-    //     aie::vector<bf16, 32> y_padded3= aie::load_v<32>(gaussians + 64);
-    //     aie::vector<bf16, 32> y_padded4= aie::load_v<32>(gaussians + 96);
-    //            event1();
+        aie::vector<bf16, 32> y_padded1= aie::load_v<32>(gaussians);
+        event1();
     
-    //     MMUL mmul1;
-    //     MMUL mmul2;
-    //     MMUL mmul3;
-    //     MMUL mmul4;
+        MMUL mmul1;
 
-    // AIE_PREPARE_FOR_PIPELINING
-    // AIE_LOOP_RANGE(GAUSSIAN_SIZE / 16, GAUSSIAN_SIZE / 16)
-    // // compute over all elements
-    // for (size_t i = 0; i < GAUSSIAN_SIZE / 16; i += 1) {
-    //     //load elements
-    //     gaussians += 128;
+    AIE_PREPARE_FOR_PIPELINING
+    AIE_LOOP_RANGE(GAUSSIAN_SIZE / 4, GAUSSIAN_SIZE / 4)
+    // compute over all elements
+    for (size_t i = 0; i < GAUSSIAN_SIZE / 4; i += 1) {
+        //load elements
+        gaussians += 32;
+        
+        mmul1.mul(va_padded,y_padded1);
+        
+        y_padded1= aie::load_v<32>(gaussians);
 
+        aie::vector<bf16, 16> output_nonormed = mmul1.to_vector<bf16>();
+        // normalize
+        aie::vector<bf16, 16> norm_vec = aie::broadcast<bf16, 16>(output_nonormed[12]);
+        //hope compiler optimize this
+        norm_vec[1] = output_nonormed[13];
+        norm_vec[2] = output_nonormed[14];
+        norm_vec[3] = output_nonormed[15];
+        
+        norm_vec[5] = output_nonormed[13];
+        norm_vec[6] = output_nonormed[14];
+        norm_vec[7] = output_nonormed[15];
+
+        norm_vec[9] = output_nonormed[13];
+        norm_vec[10] = output_nonormed[14];
+        norm_vec[11] = output_nonormed[15];
+
+        norm_vec[13] = output_nonormed[13];
+        norm_vec[14] = output_nonormed[14];
+        norm_vec[15] = output_nonormed[15];
 
         
 
-    //     mmul1.mul(va_padded,y_padded1);
-
-    //     mmul2.mul(va_padded,y_padded2);
-
-    //     mmul3.mul(va_padded,y_padded3);
-
-    //     mmul4.mul(va_padded,y_padded4);
-
+        aie::store_v(output, aie::div(output_nonormed, norm_vec).to_vector<bf16>());
         
-    //     y_padded1= aie::load_v<32>(gaussians);
-    //     y_padded2= aie::load_v<32>(gaussians + 32);
-    //     y_padded3= aie::load_v<32>(gaussians + 64);
-    //     y_padded4= aie::load_v<32>(gaussians + 96);
-
-    //     aie::store_v(output, mmul1.to_vector<bf16>());
-    //     aie::store_v(output + 16, mmul2.to_vector<bf16>());
-    //     aie::store_v(output + 32, mmul3.to_vector<bf16>());
-    //     aie::store_v(output + 48, mmul4.to_vector<bf16>());
-
-    //     // store data
-    //     output += 64;
+        // aie::store_v(output, output_nonormed);
         
+
+        // store data
+        output += 16;
+      
         
-    // }
+    }
 
 
     return;

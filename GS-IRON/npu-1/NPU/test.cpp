@@ -42,14 +42,15 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
             for(int j=0;j<4;j++){
                 for (int i = 0; i < 4; i++) {
                     int offset = tile * TILE_SIZE * 4 * 2;
+                    int offset2 = offset;
                     DATATYPE_OUT ref = bufIn1[4 * j] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[4 * j + 2] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3] * bufIn2[offset + iter * 32 + i + 12];
-                    DATATYPE_OUT ref2 = (bufIn1[j] * bufIn2[offset + iter * 16 + i] + bufIn1[j + 4] * bufIn2[offset + iter * 16 + i + 4]
-                                  + bufIn1[j + 8] * bufIn2[offset + iter * 16 + i + 8] + bufIn1[j + 12] * bufIn2[offset + iter * 16 + i + 12])
-                                  / (bufIn1[3] * bufIn2[offset + iter * 16 + i] + bufIn1[7] * bufIn2[offset + iter * 16 + i + 4]
-                                  + bufIn1[11] * bufIn2[offset + iter * 16 + i + 8] + bufIn1[15] * bufIn2[offset + iter * 16 + i + 12]);
+                    DATATYPE_OUT ref2 = (bufIn1[4 * j + 16] * bufIn2[offset2 + iter * 32 + i] + bufIn1[4 * j + 1 + 16] * bufIn2[offset2 + iter * 32 + i + 4]
+                                  + bufIn1[4 * j + 2 + 16] * bufIn2[offset2 + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 16] * bufIn2[offset2 + iter * 32 + i + 12])
+                                  / (bufIn1[12 + 16] * bufIn2[offset2 + iter * 32 + i] + bufIn1[13 + 16] * bufIn2[offset2 + iter * 32 + i + 4]
+                                  + bufIn1[14 + 16] * bufIn2[offset2 + iter * 32 + i + 8] + bufIn1[15 + 16] * bufIn2[offset2 + iter * 32 + i + 12]);
                     DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 4 * 2 + iter * 16 + i + j * 4];
-                    DATATYPE_OUT test2 = bufOut[iter * 16 + i + j * 4];
+                    DATATYPE_OUT test2 = bufOut[tile * TILE_SIZE * 4 * 2 + TILE_SIZE * 4 + iter * 16 + i + j * 4];
                     if (test < ref - 0.25 || test > ref + 0.25) {
                         if (verbosity >= 1){
 
@@ -61,22 +62,18 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                         if (verbosity >= 2)
                             std::cout << "Correct in output " << tile * TILE_SIZE * 4 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
                     }
-                // if(test2 < ref2 - 0.1 || test2 > ref2 + 0.1) {
-                //     if (verbosity >= 1){
+                    if(test2 < ref2 - 0.05 || test2 > ref2 + 0.05) {
+                        if (verbosity >= 1){
                         
-                //         std::cout << "Error in output (w) " << iter * 16 + i + j * 4 << " : " << test2 << " != " << ref2 << std::endl;
-                //     }
-                //     errors++;
+                            std::cout << "Error in output (w) " << tile * TILE_SIZE * 4 + iter * 16 + i + j * 4  << " : " << test2 << " != " << ref2 << std::endl;
+                        }
+                        errors++;
                     
-                // } else {
-                //     if (verbosity >= 1){
-                //         std::cout << "Correct in output (w) " << iter * 16 + i + j * 4 << " : " << test2 << " == " << ref2 << std::endl;
-                //         std::cout << bufIn1[j] * bufIn2[iter * 16 + i] + bufIn1[j + 4] * bufIn2[iter * 16 + i + 4]
-                //               + bufIn1[j + 8] * bufIn2[iter * 16 + i + 8] + bufIn1[j + 12] * bufIn2[iter * 16 + i + 12] << " " 
-                //               << bufIn1[3] * bufIn2[iter * 16 + i] + bufIn1[7] * bufIn2[iter * 16 + i + 4]
-                //               + bufIn1[11] * bufIn2[iter * 16 + i + 8] + bufIn1[15] * bufIn2[iter * 16 + i + 12] << "\n";
-                //     }
-                // }
+                    } else {
+                        if (verbosity >= 2){
+                            std::cout << "Correct in output (w) " << tile * TILE_SIZE * 4 + iter * 16 + i + j * 4  << " : " << test2 << " == " << ref2 << std::endl;
+                        }
+                    }
                 }
         
             }
