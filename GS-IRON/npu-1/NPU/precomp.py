@@ -29,7 +29,7 @@ import aie.utils.trace as trace_utils
 def precomp(dev):
     xfr_dtype = bfloat16
 
-    trace_size = 0
+    trace_size = 2048
 
 
     @device(dev)
@@ -42,19 +42,30 @@ def precomp(dev):
         get_camera_size = 4 * 4
         w2v_ty = np.ndarray[(world_to_view_size,), np.dtype[xfr_dtype]]
         get_camera_ty = np.ndarray[(get_camera_size,), np.dtype[xfr_dtype]]
+        
+        send_ty = np.ndarray[(15 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         gaussian_send_ty = np.ndarray[(8*line_size // sub_tiles,), np.dtype[xfr_dtype]]
-        gaussian_back_ty = np.ndarray[(4*line_size // sub_tiles,), np.dtype[xfr_dtype]]
-        return_ty = np.ndarray[(4*line_size * 2 // sub_tiles,), np.dtype[xfr_dtype]]
+        rot_send_ty = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        scale_send_ty = np.ndarray[(3 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+
+        gaussian_back1_ty = np.ndarray[(4*line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        gaussian_back2_ty = np.ndarray[(2 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        conv3D_return_ty = np.ndarray[(6 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        return_ty = np.ndarray[(12 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
         essentials_ty = np.ndarray[(world_to_view_size + get_camera_size,), np.dtype[xfr_dtype]]
 
         # AIE Core Function declarations
         w2v_func = external_func(
-            "f32_proj_to_view_space", inputs=[w2v_ty, gaussian_send_ty, gaussian_back_ty]
+            "f32_proj_to_view_space", inputs=[w2v_ty, gaussian_send_ty, gaussian_back1_ty]
         )
 
         camera_func = external_func(
-            "f32_get_camera_pos", inputs=[get_camera_ty, gaussian_send_ty, gaussian_back_ty]
+            "f32_get_camera_pos", inputs=[get_camera_ty, gaussian_send_ty, gaussian_back2_ty]
+        )
+
+        conv3D_func = external_func(
+            "f32_get_conv3D", inputs=[rot_send_ty, scale_send_ty, conv3D_return_ty]
         )
 
         # Tile declarations
@@ -62,6 +73,7 @@ def precomp(dev):
         MemTile0 = tile(0, 1)
         ComputeTileV2w = tile(0, 2)
         ComputeTileCamera = tile(0, 3)
+        ComputeTileConv3D = tile(0, 4)
 
         # AIE-array data movement with object fifos
         of_essentials = object_fifo("essentials", ShimTile0, MemTile0, 2, essentials_ty)
@@ -69,15 +81,21 @@ def precomp(dev):
         of_camera = object_fifo("camera", MemTile0, ComputeTileCamera, 2, get_camera_ty)
         object_fifo_link(of_essentials, [of_w2v, of_camera], [], [0, world_to_view_size])
 
-        of_gaussian = object_fifo("gaussian", ShimTile0, [ComputeTileV2w, ComputeTileCamera], 4, gaussian_send_ty)
-        of_out1 = object_fifo("out1", ComputeTileV2w, MemTile0, 2, gaussian_back_ty)
-        of_out2 = object_fifo("out2", ComputeTileCamera, MemTile0, 2, gaussian_back_ty)
+        of_send = object_fifo("send", ShimTile0, MemTile0, 2, send_ty)
+        of_gaussian = object_fifo("gaussian", MemTile0, [ComputeTileV2w, ComputeTileCamera], 2, gaussian_send_ty)
+        of_rot = object_fifo("rot", MemTile0, ComputeTileConv3D, 2, rot_send_ty)
+        of_scale = object_fifo("scale", MemTile0, ComputeTileConv3D, 2, scale_send_ty)
+        object_fifo_link(of_send, [of_gaussian, of_rot, of_scale], [], [0, 8*line_size // sub_tiles, 12*line_size // sub_tiles])
+        
+        of_out1 = object_fifo("out1", ComputeTileV2w, MemTile0, 2, gaussian_back1_ty)
+        of_out2 = object_fifo("out2", ComputeTileCamera, MemTile0, 2, gaussian_back2_ty)
+        of_out3 = object_fifo("out3", ComputeTileConv3D, MemTile0, 2, conv3D_return_ty)
         of_out_unit = object_fifo("out_unit",  MemTile0, ShimTile0, 2, return_ty)
-        object_fifo_link([of_out1, of_out2], of_out_unit, [0, 4*line_size // sub_tiles], [])
+        object_fifo_link([of_out1, of_out2, of_out3], of_out_unit, [0, 4*line_size // sub_tiles, 6*line_size // sub_tiles], [])
 
 
         # Compute tile for Projection Mat
-        @core(ComputeTileV2w, "precomp.o")
+        @core(ComputeTileV2w, "precomp.a")
         def core_body_v2w():
             for _ in range_(0xFFFFFFFF):
                 elemIn1 = of_w2v.acquire(ObjectFifoPort.Consume, 1)
@@ -92,7 +110,7 @@ def precomp(dev):
 
             
         # Compute tile for Projection Mat
-        @core(ComputeTileCamera, "precomp.o")
+        @core(ComputeTileCamera, "precomp.a")
         def core_body_camera():
             for _ in range_(0xFFFFFFFF):
                 elemIn1 = of_camera.acquire(ObjectFifoPort.Consume, 1)
@@ -104,7 +122,22 @@ def precomp(dev):
                     of_out2.release(ObjectFifoPort.Produce,1)
                 of_camera.release(ObjectFifoPort.Consume, 1)
                 
-        tiles_to_trace = [ComputeTileV2w, ComputeTileCamera, ShimTile0]
+
+                
+        # Compute conv3D tile
+        @core(ComputeTileConv3D, "precomp.a")
+        def core_body_conv3D():
+            for _ in range_(0xFFFFFFFF):
+                for _ in range_(sub_tiles):
+                    elemIn1 = of_rot.acquire(ObjectFifoPort.Consume, 1)
+                    elemOut = of_out3.acquire(ObjectFifoPort.Produce, 1)
+                    elemIn2 = of_scale.acquire(ObjectFifoPort.Consume, 1)
+                    conv3D_func(elemIn1, elemIn2, elemOut)
+                    of_scale.release(ObjectFifoPort.Consume, 1)
+                    of_out3.release(ObjectFifoPort.Produce,1)
+                    of_rot.release(ObjectFifoPort.Consume, 1)
+        
+        tiles_to_trace = [ComputeTileConv3D, ComputeTileCamera, ShimTile0]
         if trace_size > 0:
             trace_utils.configure_packet_tracing_flow(tiles_to_trace, ShimTile0)
 
@@ -119,9 +152,9 @@ def precomp(dev):
                     trace_size=trace_size,
                 )
             import_task = shim_dma_single_bd_task(of_essentials, A, sizes=[1, 1, 1, world_to_view_size + get_camera_size])
-            gaussian_task = shim_dma_single_bd_task(of_gaussian, B, sizes=[1, 1, 1, line_size * 8])
+            gaussian_task = shim_dma_single_bd_task(of_send, B, sizes=[1, 1, 1, line_size * 15])
             out_task = shim_dma_single_bd_task(
-                of_out_unit, C, sizes=[1, 1, 1, line_size * 4 * 2], issue_token=True
+                of_out_unit, C, sizes=[1, 1, 1, line_size * 12], issue_token=True
             )
 
             dma_start_task(import_task, gaussian_task, out_task)

@@ -28,8 +28,8 @@ const int IN1_SIZE = 16 + 16;
 const int CHUNK_SIZE = 128 * 256;
 const int TILE_SIZE = 128;
 const int TILE_COUNT = CHUNK_SIZE / TILE_SIZE;
-const int OUT_SIZE = CHUNK_SIZE * 2;
-const int TRACE_SIZE = 8192 * 4;
+const int OUT_SIZE = CHUNK_SIZE;
+const int TRACE_SIZE = 8192;
 
 
 

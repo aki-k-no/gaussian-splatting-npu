@@ -114,11 +114,11 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
                 gaussian.xyz[2] = value;
             //note that these scalings are log-based
             }else if(propName == "scale_0"){
-                gaussian.scale[0] = value;
+                gaussian.scale[0] = std::exp(value);
             }else if(propName == "scale_1"){
-                gaussian.scale[1] = value;
+                gaussian.scale[1] = std::exp(value);
             }else if(propName == "scale_2"){
-                gaussian.scale[2] = value;
+                gaussian.scale[2] = std::exp(value);
             }else if(propName == "rot_0"){
                 gaussian.rotation[0] = value;
             }else if(propName == "rot_1"){

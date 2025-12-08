@@ -12,7 +12,7 @@
 srcdir := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 include ${srcdir}/../../makefile-common
 
-INCLUDES += -I${srcdir}/../.. -I${srcdir}/../../../mlir-aie/aie_kernels
+INCLUDES += -I${srcdir}/../.. -I${srcdir}/../../../mlir-aie/aie_kernels 
 
 PROJ_NAME = precomp
 KERNEL_SRC = precomp.cc
@@ -27,16 +27,29 @@ devicename = npu2
 
 all: build/final_precomp.xclbin
 
-build/precomp.o: precomp.cc
+build/lut_based_ops.o: ${MLIR_AIE_DIR}/aie_runtime_lib/AIE2/lut_based_ops.cpp
 	mkdir -p ${@D}
 	${PEANO_INSTALL_DIR}/bin/clang++ ${PEANOWRAP2P_FLAGS} ${INCLUDES} -c $< -o $@
+
+build/precomp.o: precomp.cc 
+	mkdir -p ${@D}
+	${PEANO_INSTALL_DIR}/bin/clang++ ${PEANOWRAP2P_FLAGS} ${INCLUDES} -c $< -o $@
+
+asm:
+	mkdir -p ${@D}
+	${PEANO_INSTALL_DIR}/bin/clang++ -S ${PEANOWRAP2P_FLAGS} ${INCLUDES} -c precomp.cc -o build/precomp.s
+
+
+build/precomp.a: build/precomp.o build/lut_based_ops.o
+	mkdir -p ${@D}
+	ar rvs build/precomp.a $+
 
 
 build/aie_%.mlir: %.py
 	mkdir -p ${@D}
 	python3 $< -d ${devicename} > $@
 
-build/final_%.xclbin: build/aie_%.mlir build/%.o
+build/final_%.xclbin: build/aie_%.mlir build/%.a 
 	mkdir -p ${@D}
 ifeq ($(CHESS), true)
 	cd ${@D} && aiecc.py --aie-generate-xclbin --no-compile-host --xclbin-name=${@F} \

@@ -85,7 +85,7 @@ void setup_npu(int argc, const char *argv[]){
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
     bo_inB = xrt::bo(device, CHUNK_SIZE * 8 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    bo_outC = xrt::bo(device, OUT_SIZE * 4 * sizeof(DATATYPE_OUT),
+    bo_outC = xrt::bo(device, CHUNK_SIZE * 6 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
                             
 
@@ -164,12 +164,12 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     // save to gaussians, for now...
                     Gaussian3D &g = group.gaussians[i*CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k];
                 
-                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k]);
-                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k + 4]);
-                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + j*16 + k + 8]);
+                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + j*16 + k]);
+                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + j*16 + k + 4]);
+                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + j*16 + k + 8]);
                     
-                    g.screen_coord[0] = ((bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + TILE_SIZE * 4 + j*16 + k])+ 1.0) * cam.width - 1.0) * 0.5;
-                    g.screen_coord[1] = ((bfloat16_to_float(bufOut[TILE_SIZE * tile * 8 + TILE_SIZE * 4 + j*16 + k + 4]) + 1.0) * cam.height - 1.0) * 0.5;
+                    g.screen_coord[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + TILE_SIZE * 4 + j*8 + k]) * cam.width - 0.5;
+                    g.screen_coord[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + TILE_SIZE * 4 + j*8 + k + 4]) * cam.height - 0.5;
                     
 
                 }
@@ -185,8 +185,8 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     std::cout << "NPU itself Elapsed" << tmp << " micro sec\n";
     #endif
 
+    #ifndef __USE_NPU
     for(int i=0;i<numGaussians;i++){
-        #ifndef __USE_NPU
         Gaussian3D &g = group.gaussians[i];
         // transform to view space
         Eigen::Vector4f pos_vec;
@@ -197,13 +197,9 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
-        #endif
-
-        
-        
-        
         
     }
+    #endif
 
     // put Gaussian into tiles
     std::vector<Tile> tiles;
@@ -236,9 +232,9 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
              2*qx*qz - 2*qy*qw, 2*qy*qz + 2*qx*qw, 1 - 2*qx*qx - 2*qy*qy;
         
         Eigen::Matrix3f S;
-        S << std::exp(g.scale[0]), 0.0f, 0.0f,
-              0.0f, std::exp(g.scale[1]), 0.0f,
-              0.0f, 0.0f, std::exp(g.scale[2]);
+        S << g.scale[0], 0.0f, 0.0f,
+              0.0f, g.scale[1], 0.0f,
+              0.0f, 0.0f, g.scale[2];
 
         Eigen::Matrix3f M;
         M = R * S;
