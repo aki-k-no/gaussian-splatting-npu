@@ -158,8 +158,9 @@ void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *r
         output_nonormed1[14] = output_nonormed2[6];
         output_nonormed1[15] = output_nonormed2[7];
 
-        aie::store_v(output, aie::add(aie::mul(aie::div(output_nonormed1, norm_vec).to_vector<bf16>(), bf16(0.5)), bf16(0.5)).to_vector<bf16>());
-        
+        //aie::store_v(output, aie::add(aie::mul(aie::div(output_nonormed1, norm_vec).to_vector<bf16>(), bf16(0.5)), bf16(0.5)).to_vector<bf16>());
+        aie::store_v(output, aie::div(output_nonormed1, norm_vec).to_vector<bf16>());
+
         // store data
         output += 16;
          

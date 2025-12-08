@@ -100,7 +100,7 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                                   + bufIn1[4 * j + 2 + 16] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 16] * bufIn2[offset + iter * 32 + i + 12])
                                   / (bufIn1[12 + 16] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 16] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[14 + 16] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[15 + 16] * bufIn2[offset + iter * 32 + i + 12]);
-                                  ref = (ref + 1) * 0.5;
+                                  
                     DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 4 + iter * 8 + i + j * 4];
                     if(test < ref - 0.05 || test > ref + 0.05) {
                         if (verbosity >= 1){

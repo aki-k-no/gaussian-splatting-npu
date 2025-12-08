@@ -168,8 +168,8 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + j*16 + k + 4]);
                     g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + j*16 + k + 8]);
                     
-                    g.screen_coord[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 4 + j*8 + k]) * cam.width - 0.5;
-                    g.screen_coord[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 4 + j*8 + k + 4]) * cam.height - 0.5;
+                    g.screen_coord[0] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 4 + j*8 + k]) + 1) * 0.5 * cam.width - 0.5;
+                    g.screen_coord[1] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 4 + j*8 + k + 4]) + 1) * 0.5 * cam.height - 0.5;
 
                     float a_0_0 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6]);
                     float a_0_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 1]);
