@@ -60,17 +60,26 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }
     }
 
-    group.xyz_buf = new std::bfloat16_t[((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE * 8];
-    memset(group.xyz_buf, 0, (((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 8) * sizeof(std::bfloat16_t));
-    int size = ((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 8;
+    group.xyz_buf = new std::bfloat16_t[((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE * 15];
+    memset(group.xyz_buf, 0, (((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 15) * sizeof(std::bfloat16_t));
+    int size = ((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 15;
 
     // Read Gaussian data
     for(int i=0;i<count;i++){
-        
-        int loop_itr = i / 4 * 32;
-        int loop_res = i % 4;
-        int loop_id = loop_itr + loop_res;
 
+        int chunk_id = i / CHUNK_SIZE;
+        int chunk_offset = i % CHUNK_SIZE;
+        
+        int tile_id = chunk_offset / TILE_SIZE;
+        int tile_itr = chunk_offset % TILE_SIZE;
+        int loop_itr = tile_itr / 4 * 32;
+        int loop_res = tile_itr % 4;
+        int loop_id = chunk_id * CHUNK_SIZE * 15 + TILE_SIZE * tile_id * 15 + loop_itr + loop_res;
+
+        int tile_id2 = tile_itr / (TILE_SIZE / CONV3D_TILE_NUM);
+        int tile_itr2 = tile_itr % (TILE_SIZE / CONV3D_TILE_NUM);
+        int rot_id = chunk_id * CHUNK_SIZE * 15 + TILE_SIZE * tile_id * 15 + TILE_SIZE * 8 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + tile_itr2 / 16 * 64 + tile_itr2 % 16;
+        int scale_id = chunk_id * CHUNK_SIZE * 15 + TILE_SIZE * tile_id * 15 + TILE_SIZE * 8 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + tile_itr2 / 16 * 48 + tile_itr2 % 16;
 
         
         #ifdef __USE_NPU
@@ -114,18 +123,47 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
                 gaussian.xyz[2] = value;
             //note that these scalings are log-based
             }else if(propName == "scale_0"){
+                #ifdef __USE_NPU
+                group.xyz_buf[scale_id] = float_to_bfloat16(std::exp(value));
+                #else
+                #endif
                 gaussian.scale[0] = std::exp(value);
             }else if(propName == "scale_1"){
+                #ifdef __USE_NPU
+                group.xyz_buf[scale_id + 16] = float_to_bfloat16(std::exp(value));
+                #else
+                #endif
                 gaussian.scale[1] = std::exp(value);
             }else if(propName == "scale_2"){
+                #ifdef __USE_NPU
+                group.xyz_buf[scale_id + 32] = float_to_bfloat16(std::exp(value));
+                #else
+                #endif
                 gaussian.scale[2] = std::exp(value);
             }else if(propName == "rot_0"){
+                #ifdef __USE_NPU
+                group.xyz_buf[rot_id] = float_to_bfloat16(value);
+                #else
+                #endif
                 gaussian.rotation[0] = value;
             }else if(propName == "rot_1"){
+                #ifdef __USE_NPU
+                group.xyz_buf[rot_id + 16] = float_to_bfloat16(value);
+                #else
+                #endif
                 gaussian.rotation[1] = value;
             }else if(propName == "rot_2"){
+                #ifdef __USE_NPU
+                group.xyz_buf[rot_id + 32] = float_to_bfloat16(value);
+                #else
+                #endif
                 gaussian.rotation[2] = value;
             }else if(propName == "rot_3"){
+                
+                #ifdef __USE_NPU
+                group.xyz_buf[rot_id + 48] = float_to_bfloat16(value);
+                #else
+                #endif
                 gaussian.rotation[3] = value;
             }else if(propName == "nx"){
                 gaussian.normalxyz[0] = value;

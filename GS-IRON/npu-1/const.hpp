@@ -30,6 +30,7 @@ const int TILE_SIZE = 128;
 const int TILE_COUNT = CHUNK_SIZE / TILE_SIZE;
 const int OUT_SIZE = CHUNK_SIZE;
 const int TRACE_SIZE = 8192;
+const int CONV3D_TILE_NUM = 2;
 
 
 

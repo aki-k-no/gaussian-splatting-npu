@@ -83,9 +83,9 @@ void setup_npu(int argc, const char *argv[]){
                           XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
     bo_inA = xrt::bo(device, IN1_SIZE * sizeof(DATATYPE_IN1),
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-    bo_inB = xrt::bo(device, CHUNK_SIZE * 8 * sizeof(DATATYPE_IN2),
+    bo_inB = xrt::bo(device, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    bo_outC = xrt::bo(device, CHUNK_SIZE * 6 * sizeof(DATATYPE_OUT),
+    bo_outC = xrt::bo(device, CHUNK_SIZE * 12 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
                             
 
@@ -137,7 +137,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     for(int i=0; i < (numGaussians - 1) / CHUNK_SIZE + 1; i++){
 
         //copy the data first
-        memcpy(bufInB, group.xyz_buf + i * CHUNK_SIZE * 8, CHUNK_SIZE * 8 * sizeof(DATATYPE_IN2));
+        memcpy(bufInB, group.xyz_buf + i * CHUNK_SIZE * 15, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2));
         auto start_npu = std::chrono::steady_clock::now();
         bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
@@ -164,12 +164,22 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     // save to gaussians, for now...
                     Gaussian3D &g = group.gaussians[i*CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k];
                 
-                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + j*16 + k]);
-                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + j*16 + k + 4]);
-                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + j*16 + k + 8]);
+                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + j*16 + k]);
+                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + j*16 + k + 4]);
+                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + j*16 + k + 8]);
                     
-                    g.screen_coord[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + TILE_SIZE * 4 + j*8 + k]) * cam.width - 0.5;
-                    g.screen_coord[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 6 + TILE_SIZE * 4 + j*8 + k + 4]) * cam.height - 0.5;
+                    g.screen_coord[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 4 + j*8 + k]) * cam.width - 0.5;
+                    g.screen_coord[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 4 + j*8 + k + 4]) * cam.height - 0.5;
+
+                    float a_0_0 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6]);
+                    float a_0_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 1]);
+                    float a_0_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 2]);
+                    float a_1_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 3]);
+                    float a_1_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 4]);
+                    float a_2_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 5]);
+                    g.covariance3D << a_0_0, a_0_1, a_0_2,
+                                            a_0_1, a_1_1, a_1_2,
+                                            a_0_2, a_1_2, a_2_2;
                     
 
                 }
@@ -218,6 +228,8 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         if(g.xyz_view[2] < 0.2f){
             continue;
         }
+
+        #ifndef __USE_NPU
         Eigen::Matrix3f R;
         // convert quaternion to rotation matrix
         Eigen::Vector<float, 4> Rot;
@@ -238,7 +250,8 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
 
         Eigen::Matrix3f M;
         M = R * S;
-        Eigen::Matrix3f covariance3D = M * M.transpose();
+        g.covariance3D = M * M.transpose();
+        #endif
         
 
         // project to 2D covariance
@@ -250,7 +263,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         Eigen::Matrix<float, 3, 3> J_R = J * cam.world_to_view.block<3,3>(0,0);
         
 
-        Eigen::Matrix3f covariance2D = J_R * covariance3D * J_R.transpose(); 
+        Eigen::Matrix3f covariance2D = J_R * g.covariance3D * J_R.transpose(); 
         constexpr float h_var = 0.3f;
 	    float det_cov2D = covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0);
     	covariance2D(0,0) += h_var;

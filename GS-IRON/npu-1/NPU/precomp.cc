@@ -168,8 +168,10 @@ void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *r
 }
 
 template <const int GAUSSIAN_SIZE>
-void get_conv3D(bf16 *restrict rotations, bf16 *restrict scales, bf16 *restrict output){
+void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
 
+
+    bf16 *scales = rotations + GAUSSIAN_SIZE * 4;
     for(size_t i=0;i<GAUSSIAN_SIZE / 16;i++){
 
         // load rotation quaternions
@@ -316,5 +318,5 @@ void f32_proj_to_view_space(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { proj_
 
 void f32_get_camera_pos(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { get_camera_pos<128>(proj_in, gaussian_in, out); }
 
-void f32_get_conv3D(bf16 *rot_in, bf16 *scale_in, bf16 *out) { get_conv3D<128>(rot_in, scale_in, out); }
+void f32_get_conv3D(bf16 *rot_in, bf16 *out) { get_conv3D<64>(rot_in, out); }
 } // extern "C"
