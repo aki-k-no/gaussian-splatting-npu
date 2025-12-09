@@ -48,15 +48,12 @@ void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 
         aie::vector<bf16, 32> y_padded3= aie::load_v<32>(gaussians + 64);
         aie::vector<bf16, 32> y_padded4= aie::load_v<32>(gaussians + 96);
 
-    
-
     AIE_PREPARE_FOR_PIPELINING
     AIE_LOOP_RANGE(GAUSSIAN_SIZE / 16, GAUSSIAN_SIZE / 16)
     // compute over all elements
     for (size_t i = 0; i < GAUSSIAN_SIZE / 16; i += 1) {
         //load elements
 
-        
         MMUL mmul1;
         MMUL mmul2;
         MMUL mmul3;
@@ -73,21 +70,22 @@ void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 
         y_padded3= aie::load_v<32>(gaussians + 64);
         y_padded4= aie::load_v<32>(gaussians + 96);
 
-
-
-        
-
-        aie::store_v(output, mmul1.to_vector<bf16>());
-        aie::store_v(output + 16, mmul2.to_vector<bf16>());
-        aie::store_v(output + 32, mmul3.to_vector<bf16>());
-        aie::store_v(output + 48, mmul4.to_vector<bf16>());
+        aie::vector<bf16, 16> output_vec1 = mmul1.to_vector<bf16>();
+        output_vec1 = aie::transpose(output_vec1, 4, 4);
+        aie::vector<bf16, 16> output_vec2 = mmul2.to_vector<bf16>();
+        output_vec2 = aie::transpose(output_vec2, 4, 4);
+        aie::vector<bf16, 16> output_vec3 = mmul3.to_vector<bf16>();
+        output_vec3 = aie::transpose(output_vec3, 4, 4);
+        aie::vector<bf16, 16> output_vec4 = mmul4.to_vector<bf16>();
+        output_vec4 = aie::transpose(output_vec4, 4, 4);
+        aie::store_v(output, output_vec1);
+        aie::store_v(output + 16, output_vec2);
+        aie::store_v(output + 32, output_vec3);
+        aie::store_v(output + 48, output_vec4);
 
         // store data
         output += 64;
-        
-        
     }
-
     return;
 }
 
@@ -173,6 +171,9 @@ void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
 
 
     bf16 *scales = rotations + GAUSSIAN_SIZE * 4;
+
+    AIE_PREPARE_FOR_PIPELINING
+    AIE_LOOP_RANGE(GAUSSIAN_SIZE / 16, GAUSSIAN_SIZE / 16)
     for(size_t i=0;i<GAUSSIAN_SIZE / 16;i++){
 
         // load rotation quaternions
@@ -210,6 +211,9 @@ void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
 
 
         // compute xy, xz, yz, xx, yy, zz etc...
+        
+        AIE_PREPARE_FOR_PIPELINING
+        AIE_LOOP_RANGE(16, 16)
         for(size_t j=0;j<16;j++){
 
             aie::vector<bf16, 8> compute_vec1(rot_normed_xs[j], rot_normed_xs[j], rot_normed_ws[j], rot_normed_ws[j],
@@ -309,8 +313,18 @@ void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
         
         event1();
     }
+}
 
+template <const int GAUSSIAN_SIZE>
+void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict output){
+    return;
+}
 
+//cov2D computation
+template <const int GAUSSIAN_SIZE>
+void get_conv2D(bf16 * mats, bf16 *restrict cov3D, bf16 *restrict output){
+    
+    return;
 }
 
 extern "C" {
@@ -319,5 +333,7 @@ void f32_proj_to_view_space(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { proj_
 
 void f32_get_camera_pos(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { get_camera_pos<128>(proj_in, gaussian_in, out); }
 
-void f32_get_conv3D(bf16 *rot_in, bf16 *out) { get_conv3D<64>(rot_in, out); }
+void f32_get_conv3D(bf16 *rot_in, bf16 *out) { get_conv3D<32>(rot_in, out); }
+
+void f32_get_J_R(bf16 *params_in, bf16 *pos_in, bf16 *out) { get_J_R<128>(params_in, pos_in, out); }
 } // extern "C"

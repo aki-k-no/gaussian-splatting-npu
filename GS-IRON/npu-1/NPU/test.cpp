@@ -33,11 +33,11 @@ void generate_random_bfloat16(std::bfloat16_t* buf, size_t n, float min_val, flo
 void check_each(int verbosity, DATATYPE_OUT test, DATATYPE_OUT ref, int index, float tol) {
     if (test < ref - tol || test > ref + tol) {
         if (verbosity >= 1){
-            std::cout << "Error in output " << index << " : " << test << " != " << ref << std::endl;
+            std::cout << "Error in output (rot) " << index << " : " << test << " != " << ref << std::endl;
         }
     } else {
         if (verbosity >= 2)
-            std::cout << "Correct in output " << index << " : " << test << " == " << ref << std::endl;
+            std::cout << "Correct in output (rot) " << index << " : " << test << " == " << ref << std::endl;
     }
 }
 
@@ -71,17 +71,17 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                     int offset = tile * TILE_SIZE * 15;
                     DATATYPE_OUT ref = bufIn1[4 * j] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[4 * j + 2] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3] * bufIn2[offset + iter * 32 + i + 12];
-                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 12 + iter * 16 + i + j * 4];
+                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 18 + iter * 16 + i * 4 + j];
                     if (test < ref - 0.25 || test > ref + 0.25) {
                         if (verbosity >= 1){
 
-                            std::cout << "Error in output " << tile * TILE_SIZE * 12 + iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
+                            std::cout << "Error in output " << tile * TILE_SIZE * 18 + iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
                         }
                         errors++;
 
                     } else {
                         if (verbosity >= 2)
-                            std::cout << "Correct in output " << tile * TILE_SIZE * 12 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
+                            std::cout << "Correct in output " << tile * TILE_SIZE * 18 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
                     }
                     
                 }
@@ -96,22 +96,22 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
             for(int j=0;j<2;j++){
                 for (int i = 0; i < 4; i++) {
                     int offset = tile * TILE_SIZE * 15;
-                    DATATYPE_OUT ref = (bufIn1[4 * j + 16] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1 + 16] * bufIn2[offset + iter * 32 + i + 4]
-                                  + bufIn1[4 * j + 2 + 16] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 16] * bufIn2[offset + iter * 32 + i + 12])
-                                  / (bufIn1[12 + 16] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 16] * bufIn2[offset + iter * 32 + i + 4]
-                                  + bufIn1[14 + 16] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[15 + 16] * bufIn2[offset + iter * 32 + i + 12]);
+                    DATATYPE_OUT ref = (bufIn1[4 * j + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1 + 18] * bufIn2[offset + iter * 32 + i + 4]
+                                  + bufIn1[4 * j + 2 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 18] * bufIn2[offset + iter * 32 + i + 12])
+                                  / (bufIn1[12 + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 18] * bufIn2[offset + iter * 32 + i + 4]
+                                  + bufIn1[14 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[15 + 18] * bufIn2[offset + iter * 32 + i + 12]);
                                   
-                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 4 + iter * 8 + i + j * 4];
+                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 18 + TILE_SIZE * 4 + iter * 8 + i + j * 4];
                     if(test < ref - 0.05 || test > ref + 0.05) {
                         if (verbosity >= 1){
                         
-                            std::cout << "Error in output (w) " << tile * TILE_SIZE * 12 + iter * 8 + i + j * 4  << " : " << test << " != " << ref << std::endl;
+                            std::cout << "Error in output (w) " << tile * TILE_SIZE * 18 + iter * 8 + i + j * 4  << " : " << test << " != " << ref << std::endl;
                         }
                         errors++;
                     
                     } else {
                         if (verbosity >= 2){
-                            std::cout << "Correct in output (w) " << tile * TILE_SIZE * 12 + iter * 8 + i + j * 4  << " : " << test << " == " << ref << std::endl;
+                            std::cout << "Correct in output (w) " << tile * TILE_SIZE * 18 + iter * 8 + i + j * 4  << " : " << test << " == " << ref << std::endl;
                         }
                     }
                 }
@@ -142,12 +142,12 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                     z /= norm;
 
                     
-                    DATATYPE_OUT test1 = bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6];
-                    DATATYPE_OUT test2 = bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 1];
-                    DATATYPE_OUT test3 = bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 2];
-                    DATATYPE_OUT test4 = bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 3];
-                    DATATYPE_OUT test5 = bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 4];
-                    DATATYPE_OUT test6 = bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 5];
+                    DATATYPE_OUT test1 = bufOut[tile * TILE_SIZE * 18 + TILE_SIZE * 12 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6];
+                    DATATYPE_OUT test2 = bufOut[tile * TILE_SIZE * 18 + TILE_SIZE * 12 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 1];
+                    DATATYPE_OUT test3 = bufOut[tile * TILE_SIZE * 18 + TILE_SIZE * 12 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 2];
+                    DATATYPE_OUT test4 = bufOut[tile * TILE_SIZE * 18 + TILE_SIZE * 12 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 3];
+                    DATATYPE_OUT test5 = bufOut[tile * TILE_SIZE * 18 + TILE_SIZE * 12 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 4];
+                    DATATYPE_OUT test6 = bufOut[tile * TILE_SIZE * 18 + TILE_SIZE * 12 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 5];
 
                     
 
@@ -245,7 +245,7 @@ int main(int argc, const char *argv[]) {
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
     auto bo_inB = xrt::bo(device, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    auto bo_outC = xrt::bo(device, CHUNK_SIZE * 12 * sizeof(DATATYPE_OUT),
+    auto bo_outC = xrt::bo(device, CHUNK_SIZE * 18 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
     #ifdef __ENABLE_TRACE
     auto bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(7));
@@ -276,7 +276,7 @@ int main(int argc, const char *argv[]) {
 
     // Zero out buffer bo_outC
     DATATYPE_OUT *bufOut = bo_outC.map<DATATYPE_OUT *>();
-    for (int i = 0; i < CHUNK_SIZE * 12; i++)
+    for (int i = 0; i < CHUNK_SIZE * 18; i++)
         bufOut[i] = 14;
 
     #ifdef __ENABLE_TRACE

@@ -24,13 +24,13 @@ const float SH_C3[] = {
 	-0.5900435899266435f
 };
 
-const int IN1_SIZE = 16 + 16;
+const int IN1_SIZE = 18 + 16;
 const int CHUNK_SIZE = 128 * 256;
 const int TILE_SIZE = 128;
 const int TILE_COUNT = CHUNK_SIZE / TILE_SIZE;
 const int OUT_SIZE = CHUNK_SIZE;
 const int TRACE_SIZE = 8192;
-const int CONV3D_TILE_NUM = 2;
+const int CONV3D_TILE_NUM = 4;
 
 
 

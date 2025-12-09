@@ -85,7 +85,7 @@ void setup_npu(int argc, const char *argv[]){
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
     bo_inB = xrt::bo(device, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    bo_outC = xrt::bo(device, CHUNK_SIZE * 12 * sizeof(DATATYPE_OUT),
+    bo_outC = xrt::bo(device, CHUNK_SIZE * 18 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
                             
 
@@ -164,19 +164,19 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     // save to gaussians, for now...
                     Gaussian3D &g = group.gaussians[i*CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k];
                 
-                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + j*16 + k]);
-                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + j*16 + k + 4]);
-                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + j*16 + k + 8]);
+                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + j*16 + k * 4]);
+                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + j*16 + k * 4 + 1]);
+                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + j*16 + k * 4 + 2]);
                     
-                    g.screen_coord[0] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 4 + j*8 + k]) + 1) * 0.5 * cam.width - 0.5;
-                    g.screen_coord[1] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 4 + j*8 + k + 4]) + 1) * 0.5 * cam.height - 0.5;
+                    g.screen_coord[0] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + TILE_SIZE * 4 + j*8 + k]) + 1) * 0.5 * cam.width - 0.5;
+                    g.screen_coord[1] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + TILE_SIZE * 4 + j*8 + k + 4]) + 1) * 0.5 * cam.height - 0.5;
 
-                    float a_0_0 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6]);
-                    float a_0_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 1]);
-                    float a_0_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 2]);
-                    float a_1_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 3]);
-                    float a_1_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 4]);
-                    float a_2_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 12 + TILE_SIZE * 6 + (j*4 + k) * 6 + 5]);
+                    float a_0_0 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + TILE_SIZE * 12 + (j*4 + k) * 6]);
+                    float a_0_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + TILE_SIZE * 12 + (j*4 + k) * 6 + 1]);
+                    float a_0_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + TILE_SIZE * 12 + (j*4 + k) * 6 + 2]);
+                    float a_1_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + TILE_SIZE * 12 + (j*4 + k) * 6 + 3]);
+                    float a_1_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + TILE_SIZE * 12 + (j*4 + k) * 6 + 4]);
+                    float a_2_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 18 + TILE_SIZE * 12 + (j*4 + k) * 6 + 5]);
                     g.covariance3D << a_0_0, a_0_1, a_0_2,
                                             a_0_1, a_1_1, a_1_2,
                                             a_0_2, a_1_2, a_2_2;
