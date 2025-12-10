@@ -21,6 +21,7 @@ struct Gaussian3D {
     Eigen::Vector3f color;         // RGB color
     Eigen::Matrix2f inv_cov_2d;    // Inverse of 2D covariance matrix
     Eigen::Matrix3f covariance3D;  // 3D covariance matrix
+    Eigen::Matrix<float, 3, 3> J_R;     // Jacobian from 3D to 2D
 };
 
 // Container for loaded Gaussians

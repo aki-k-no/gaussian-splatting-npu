@@ -14,6 +14,7 @@
 #include <aie_api/detail/aie2/transpose.hpp>
 #include <lut_based_ops.h>
 #include <stdint.h>
+#include "../const.hpp"
 // #include <stdio.h>
 // #include <stdlib.h>
 // #include <type_traits>
@@ -317,6 +318,114 @@ void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
 
 template <const int GAUSSIAN_SIZE>
 void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict output){
+
+    aie::vector<bf16, 16> param_vec = ::aie::load_v<16>(params);
+    bf16 a1 = params[0];
+    bf16 a2 = params[1];
+    bf16 a3 = params[2];
+    bf16 b1 = params[4];
+    bf16 b2 = params[5];
+    bf16 b3 = params[6];
+    bf16 c1 = params[8];
+    bf16 c2 = params[9];
+    bf16 c3 = params[10];
+
+    
+    //vector for computation
+    //pack them
+    aie::vector<bf16, 8> compute_vec1_half = aie::zeros<bf16, 8>();
+    compute_vec1_half[0] = a1;
+    compute_vec1_half[1] = a2;
+    compute_vec1_half[2] = a3;
+    compute_vec1_half[4] = b1;
+    compute_vec1_half[5] = b2;
+    compute_vec1_half[6] = b3;
+    aie::vector<bf16, 16> compute_vec1 = aie::concat(compute_vec1_half, compute_vec1_half);
+
+    aie::vector<bf16, 8> compute_vec2_half = aie::zeros<bf16, 8>();
+    compute_vec2_half[0] = c1;
+    compute_vec2_half[1] = c2;
+    compute_vec2_half[2] = c3;
+    compute_vec2_half[4] = c1;
+    compute_vec2_half[5] = c2;
+    compute_vec2_half[6] = c3;
+
+    aie::vector<bf16, 16> compute_vec2 = aie::concat(compute_vec2_half, compute_vec2_half);
+
+
+
+
+    bf16 fx = params[16];
+    bf16 fy = params[17];
+    aie::vector<bf16, 16> cam_fx_vec = aie::filter_even(aie::broadcast(fx));
+    aie::vector<bf16, 16> cam_fy_vec = aie::filter_even(aie::broadcast(fy));
+    fx = bf16(-1) * fx;
+    fy = bf16(-1) * fy;
+
+    bf16 tmp[64];
+    
+    AIE_LOOP_NO_UNROLL
+    for(size_t i = 0;i<GAUSSIAN_SIZE / 16;i++){
+        aie::vector<bf16,64> before_transpose = ::aie::load_v<64>(positions);
+        positions += 64;
+        aie::vector<bf16,64> after_transpose = aie::transpose(before_transpose, 16, 4);
+
+        //store it temporarily for splitting
+        aie::store_v(tmp, after_transpose);
+
+        aie::vector<bf16,16> xs = aie::load_v<16>(tmp);
+        aie::vector<bf16,16> ys = aie::load_v<16>(tmp + 16);
+        aie::vector<bf16,16> zs = aie::load_v<16>(tmp + 32);
+
+        aie::vector<bf16,16> fx_z = aie::div(cam_fx_vec, zs);
+        aie::vector<bf16,16> fy_z = aie::div(cam_fy_vec, zs);
+
+        aie::vector<bf16,16> z_z = aie::mul(zs, zs).to_vector<bf16>();
+
+        aie::vector<bf16,16> calc1 = aie::div(aie::mul(xs, fx).to_vector<bf16>(), z_z);
+        aie::vector<bf16,16> calc2 = aie::div(aie::mul(ys, fy).to_vector<bf16>(), z_z);
+
+        for(size_t j=0; j<16; j+= 2){
+            // use element-wise calc
+            aie::accum<accfloat, 16> J_R_accum = aie::zeros<accfloat, 16>();
+
+            aie::vector<bf16,16> factor_vec1 = aie::zeros<bf16,16>();
+            factor_vec1[0] = fx_z[j];
+            factor_vec1[1] = fx_z[j];
+            factor_vec1[2] = fx_z[j];
+            factor_vec1[4] = fy_z[j];
+            factor_vec1[5] = fy_z[j];
+            factor_vec1[6] = fy_z[j];
+            factor_vec1[8] = fx_z[j + 1];
+            factor_vec1[9] = fx_z[j + 1];
+            factor_vec1[10] = fx_z[j + 1];
+            factor_vec1[12] = fy_z[j + 1];
+            factor_vec1[13] = fy_z[j + 1];
+            factor_vec1[14] = fy_z[j + 1];
+
+            aie::vector<bf16,16> factor_vec2 = aie::zeros<bf16,16>();
+            factor_vec2[0] = calc1[j];
+            factor_vec2[1] = calc1[j];
+            factor_vec2[2] = calc1[j];
+            factor_vec2[4] = calc2[j];
+            factor_vec2[5] = calc2[j];
+            factor_vec2[6] = calc2[j];
+            factor_vec2[8] = calc1[j + 1];
+            factor_vec2[9] = calc1[j + 1];
+            factor_vec2[10] = calc1[j + 1];
+            factor_vec2[12] = calc2[j + 1];
+            factor_vec2[13] = calc2[j + 1];
+            factor_vec2[14] = calc2[j + 1];
+
+            J_R_accum = aie::mul(compute_vec1, factor_vec1);
+            J_R_accum = aie::mac(J_R_accum, compute_vec2, factor_vec2);
+            aie::store_v(output, J_R_accum.to_vector<bf16>());
+
+            //store them 
+            output += 16;
+        }
+
+    }
     return;
 }
 
@@ -329,11 +438,11 @@ void get_conv2D(bf16 * mats, bf16 *restrict cov3D, bf16 *restrict output){
 
 extern "C" {
 
-void f32_proj_to_view_space(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { proj_to_view_space<128>(proj_in, gaussian_in, out); }
+void f32_proj_to_view_space(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { proj_to_view_space<TILE_SIZE>(proj_in, gaussian_in, out); }
 
-void f32_get_camera_pos(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { get_camera_pos<128>(proj_in, gaussian_in, out); }
+void f32_get_camera_pos(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { get_camera_pos<TILE_SIZE>(proj_in, gaussian_in, out); }
 
-void f32_get_conv3D(bf16 *rot_in, bf16 *out) { get_conv3D<32>(rot_in, out); }
+void f32_get_conv3D(bf16 *rot_in, bf16 *out) { get_conv3D<TILE_SIZE / CONV3D_TILE_NUM>(rot_in, out); }
 
-void f32_get_J_R(bf16 *params_in, bf16 *pos_in, bf16 *out) { get_J_R<128>(params_in, pos_in, out); }
+void f32_get_J_R(bf16 *params_in, bf16 *pos_in, bf16 *out) { get_J_R<TILE_SIZE>(params_in, pos_in, out); }
 } // extern "C"

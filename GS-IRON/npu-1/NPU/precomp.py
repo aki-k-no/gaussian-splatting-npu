@@ -55,11 +55,11 @@ def precomp(dev):
         send2_ty = np.ndarray[(7 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         rot_and_scale_send_ty = np.ndarray[(7 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         gaussian_back1_ty = np.ndarray[(4*line_size // sub_tiles,), np.dtype[xfr_dtype]]
-        to_cov2D_ty = np.ndarray[(6 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        to_cov2D_ty = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         gaussian_back2_ty = np.ndarray[(2 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         conv3D_return_ty = np.ndarray[(6 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         
-        return1_ty = np.ndarray[(12 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
+        return1_ty = np.ndarray[(14 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
         return2_ty = np.ndarray[(6 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
@@ -215,15 +215,15 @@ def precomp(dev):
             )
             out1_task = shim_dma_single_bd_task(
                 of_out1_unit, C, issue_token=True,
-                sizes = [1, 1, sub_tiles, 12 * tile_size],
-                strides = [0,0,tile_size * 18,1],
+                sizes = [1, 1, sub_tiles, 14 * tile_size],
+                strides = [0,0,tile_size * 20,1],
                 offset = 0
             )
             out2_task = shim_dma_single_bd_task(
                 of_out2_unit, C, issue_token=True,
                 sizes = [1, 1, sub_tiles, 6 * tile_size],
-                strides = [0,0,tile_size * 18,1],
-                offset = 12 * tile_size
+                strides = [0,0,tile_size * 20,1],
+                offset = 14 * tile_size
             )
 
             dma_start_task(import_task, gaussian_task, rot_scale_task, out1_task, out2_task)
