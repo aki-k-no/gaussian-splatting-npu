@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <chrono>
 
+#include <random>
+
 #include "opencv2/opencv.hpp"
 
 #define NUM_COEFF 15
@@ -197,6 +199,9 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         }
     }
 
+    std::random_device rd;
+    std::uniform_real_distribution<> dis(0.0, 1.0);
+
     // convergence 3D & 2D
     for(int i=0;i<numGaussians;i++){
         Gaussian3D &g = group.gaussians[i];
@@ -238,19 +243,25 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         Eigen::Matrix<float, 3, 3> J_R =  float_to_bfloat_mat3f(float_to_bfloat_mat3f(J) * cam.world_to_view.block<3,3>(0,0));
         
 
-        Eigen::Matrix3f covariance2D =  float_to_bfloat_mat3f(J_R * covariance3D * J_R.transpose()); 
+        Eigen::Matrix3f covariance2D =  float_to_bfloat_mat3f(float_to_bfloat_mat3f(J_R * covariance3D) * J_R.transpose());
+        
         constexpr float h_var = 0.3f;
-	    float det_cov2D = float_to_bfloat16_scale(covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0));
-    	covariance2D(0,0) += float_to_bfloat16_scale(h_var);
-	    covariance2D(1,1) += float_to_bfloat16_scale(h_var);
-    	const float det_cov_plus_h_cov = float_to_bfloat16_scale(covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0));
+	    float det_cov2D = float_to_bfloat16_scale(float_to_bfloat16_scale(covariance2D(0,0) * covariance2D(1,1)) - float_to_bfloat16_scale(covariance2D(1,0) * covariance2D(1,0)));
+    	covariance2D(0,0) = float_to_bfloat16_scale(h_var + covariance2D(0,0));
+	    covariance2D(1,1) = float_to_bfloat16_scale(h_var + covariance2D(1,1));
+    	const float det_cov_plus_h_cov = float_to_bfloat16_scale(float_to_bfloat16_scale(covariance2D(0,0) * covariance2D(1,1)) - float_to_bfloat16_scale(covariance2D(1,0) * covariance2D(1,0)));
+        float sample = float_to_bfloat16_scale(covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0));
+        if(true){
+            std::cout << sample << " " << det_cov_plus_h_cov << "\n";
+            std::cout << covariance2D(0,0) << " " <<  covariance2D(0,1) << " " <<  covariance2D(1,1) << "\n";
+        }
+
 	    float h_convolution_scaling = 1.0f;  
         if(antialiasing)
 	    	h_convolution_scaling = float_to_bfloat16_scale(std::sqrt(std::max(0.000025f, det_cov2D / det_cov_plus_h_cov))); // max for numerical stability
             g.opacity *= h_convolution_scaling;
-        
 
-        float det = det_cov_plus_h_cov;
+        float det = sample;
         float det_inv = float_to_bfloat16_scale(1.f / det);
         // we use this afterwards
         g.inv_cov_2d << covariance2D(1,1) * det_inv, -covariance2D(1,0) * det_inv,

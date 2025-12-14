@@ -185,6 +185,7 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }
         }
         gaussian.color = Eigen::Vector3f(0.0f, 0.0f, 0.0f); // Initialize color
+        gaussian.index = i;
         group.gaussians.push_back(gaussian);
     }
     

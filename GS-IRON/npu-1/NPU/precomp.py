@@ -29,7 +29,7 @@ import aie.utils.trace as trace_utils
 def precomp(dev):
     xfr_dtype = bfloat16
 
-    trace_size = 0 # 2048
+    trace_size = 2048
 
 
     @device(dev)
@@ -57,17 +57,19 @@ def precomp(dev):
         gaussian_back1_ty = np.ndarray[(4*line_size // sub_tiles,), np.dtype[xfr_dtype]]
         to_cov2D_ty = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         gaussian_back2_ty = np.ndarray[(2 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
-        conv3D_return_ty = np.ndarray[(6 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        conv3D_return_ty = np.ndarray[(8 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        conv3D_return_ty_accum = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        cov2D_return_ty = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         
-        return1_ty = np.ndarray[(14 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
+        return1_ty = np.ndarray[(6 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
-        return2_ty = np.ndarray[(6 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
+        return2_ty = np.ndarray[(4 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
         essentials_ty = np.ndarray[(world_to_view_size + get_camera_size,), np.dtype[xfr_dtype]]
 
         # this is required for runtime sequence
         send_ty = np.ndarray[(line_size * 15,), np.dtype[xfr_dtype]]
-        return_ty = np.ndarray[(line_size * 18,), np.dtype[xfr_dtype]]
+        return_ty = np.ndarray[(line_size * 10,), np.dtype[xfr_dtype]]
 
         # AIE Core Function declarations
         w2v_func = external_func(
@@ -83,7 +85,11 @@ def precomp(dev):
         )
 
         getJ_R_func = external_func(
-            "f32_get_J_R", inputs=[w2v_ty, gaussian_back1_ty,to_cov2D_ty]
+            "f32_get_J_R", inputs=[w2v_ty, gaussian_back1_ty, to_cov2D_ty]
+        )
+
+        conv2D_func = external_func(
+            "f32_get_conv2D", inputs=[to_cov2D_ty, conv3D_return_ty_accum, cov2D_return_ty]
         )
 
         # Tile declarations
@@ -95,6 +101,7 @@ def precomp(dev):
         ComputeTileCamera = tile(0, 3)
         ComputeTileJR = tile(0, 4)
         ComputeTileConv3Ds = [tile(1, 2), tile(1,3), tile(1, 4), tile(1,5)]
+        ComputeTileConv2D = tile(0,5)
 
         # AIE-array data movement with object fifos
         of_essentials = object_fifo("essentials", ShimTile0, MemTile0, 2, essentials_ty)
@@ -105,7 +112,7 @@ def precomp(dev):
         of_send1 = object_fifo("send1", ShimTile0, MemTile0, 2, send1_ty)
         of_gaussian = object_fifo("gaussian", MemTile0, [ComputeTileV2w, ComputeTileCamera], 2, gaussian_send_ty)
         
-        fifo_send1_link_list =[of_gaussian]
+        fifo_send1_link_list = [of_gaussian]
         fifo_send1_offset_list = [0]
         object_fifo_link(of_send1, fifo_send1_link_list, [], fifo_send1_offset_list)
 
@@ -119,19 +126,24 @@ def precomp(dev):
         
         of_out1 = object_fifo("out1", ComputeTileV2w, [MemTile0, ComputeTileJR], 2, gaussian_back1_ty)
         of_out2 = object_fifo("out2", ComputeTileCamera, MemTile0, 2, gaussian_back2_ty)
-        of_out_cov2D = object_fifo("out_cov2D", ComputeTileJR, MemTile0, 2, to_cov2D_ty)
         of_out1_unit = object_fifo("out1_unit",  MemTile0, ShimTile0, 2, return1_ty)
 
-        fifo_back1_link_list = [of_out1, of_out2, of_out_cov2D]
-        fifo_back1_offset_list = [0, 4*line_size // sub_tiles, 6*line_size // sub_tiles]
+        fifo_back1_link_list = [of_out1, of_out2]
+        fifo_back1_offset_list = [0, 4*line_size // sub_tiles]
         object_fifo_link(fifo_back1_link_list, of_out1_unit, fifo_back1_offset_list, [])
 
+        of_JR_cov2D = object_fifo("to_cov2D", ComputeTileJR, ComputeTileConv2D, 2, to_cov2D_ty)
+    
+        of_conv3D_unit = object_fifo("conv3D_unit",  MemTile1, ComputeTileConv2D, 2, conv3D_return_ty_accum)
+        of_to_cov2D = [object_fifo("cov3Dto2D" + str(i), ComputeTileConv3Ds[i], MemTile1, 2, conv3D_return_ty) for i in range(conv3D_num)]
+        fifo_to_cov2D_link_list = of_to_cov2D
+        fifo_to_cov2D_offset_list = [(8*line_size // sub_tiles) // conv3D_num * i for i in range(conv3D_num)]
+        object_fifo_link(fifo_to_cov2D_link_list, of_conv3D_unit, fifo_to_cov2D_offset_list, [])
+        
+        of_out2_unit = object_fifo("out2_unit",  MemTile1, ShimTile1, 2, cov2D_return_ty)
+        of_cov2D_return = object_fifo("cov2D_return", ComputeTileConv2D, MemTile1, 2, cov2D_return_ty)
+        object_fifo_link(of_cov2D_return, of_out2_unit, [], [])
 
-        of_out2_unit = object_fifo("out2_unit",  MemTile1, ShimTile1, 2, return2_ty)
-        of_out3s = [object_fifo("out3" + str(i), ComputeTileConv3Ds[i], MemTile1, 2, conv3D_return_ty) for i in range(conv3D_num)]
-        fifo_back2_link_list = of_out3s
-        fifo_back2_offset_list = [(6*line_size // sub_tiles) // conv3D_num * i for i in range(conv3D_num)]
-        object_fifo_link(fifo_back2_link_list, of_out2_unit, fifo_back2_offset_list, [])
 
 
         # Compute tile for Projection Mat
@@ -167,11 +179,11 @@ def precomp(dev):
             for _ in range_(0xFFFFFFFF):
                 elemIn1 = of_w2v.acquire(ObjectFifoPort.Consume, 1)
                 for _ in range_(sub_tiles):
-                    elemOut = of_out_cov2D.acquire(ObjectFifoPort.Produce, 1)
+                    elemOut = of_JR_cov2D.acquire(ObjectFifoPort.Produce, 1)
                     elemIn2 = of_out1.acquire(ObjectFifoPort.Consume, 1)
                     getJ_R_func(elemIn1, elemIn2, elemOut)
                     of_out1.release(ObjectFifoPort.Consume, 1)
-                    of_out_cov2D.release(ObjectFifoPort.Produce,1)
+                    of_JR_cov2D.release(ObjectFifoPort.Produce,1)
                 of_w2v.release(ObjectFifoPort.Consume, 1)
                 
 
@@ -183,12 +195,25 @@ def precomp(dev):
                 for _ in range_(0xFFFFFFFF):
                     for _ in range_(sub_tiles):
                         elemIn1 = of_rot_and_scales[i].acquire(ObjectFifoPort.Consume, 1)
-                        elemOut = of_out3s[i].acquire(ObjectFifoPort.Produce, 1)
+                        elemOut = of_to_cov2D[i].acquire(ObjectFifoPort.Produce, 1)
                         conv3D_func(elemIn1, elemOut)
-                        of_out3s[i].release(ObjectFifoPort.Produce,1)
+                        of_to_cov2D[i].release(ObjectFifoPort.Produce,1)
                         of_rot_and_scales[i].release(ObjectFifoPort.Consume, 1)
-        
-        tiles_to_trace = [ComputeTileConv3Ds[0], ComputeTileCamera, ShimTile0]
+
+        # Compute conv2D tile        
+        @core(ComputeTileConv2D, "precomp.a")
+        def core_body_cov2D():
+            for _ in range_(0xFFFFFFFF):
+                for _ in range_(sub_tiles):
+                    elemIn1 = of_JR_cov2D.acquire(ObjectFifoPort.Consume, 1)
+                    elemOut = of_cov2D_return.acquire(ObjectFifoPort.Produce, 1)
+                    elemIn2 = of_conv3D_unit.acquire(ObjectFifoPort.Consume, 1)
+                    conv2D_func(elemIn1, elemIn2, elemOut)
+                    of_conv3D_unit.release(ObjectFifoPort.Consume, 1)
+                    of_cov2D_return.release(ObjectFifoPort.Produce,1)
+                    of_JR_cov2D.release(ObjectFifoPort.Consume, 1)
+
+        tiles_to_trace = [ComputeTileConv2D, ComputeTileCamera, ShimTile0]
         if trace_size > 0:
             trace_utils.configure_packet_tracing_flow(tiles_to_trace, ShimTile0)
 
@@ -215,15 +240,15 @@ def precomp(dev):
             )
             out1_task = shim_dma_single_bd_task(
                 of_out1_unit, C, issue_token=True,
-                sizes = [1, 1, sub_tiles, 14 * tile_size],
-                strides = [0,0,tile_size * 20,1],
+                sizes = [1, 1, sub_tiles, 6 * tile_size],
+                strides = [0,0,tile_size * 10,1],
                 offset = 0
             )
             out2_task = shim_dma_single_bd_task(
                 of_out2_unit, C, issue_token=True,
-                sizes = [1, 1, sub_tiles, 6 * tile_size],
-                strides = [0,0,tile_size * 20,1],
-                offset = 14 * tile_size
+                sizes = [1, 1, sub_tiles, 4 * tile_size],
+                strides = [0,0,tile_size * 10,1],
+                offset = 6 * tile_size
             )
 
             dma_start_task(import_task, gaussian_task, rot_scale_task, out1_task, out2_task)

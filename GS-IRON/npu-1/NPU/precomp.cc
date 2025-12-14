@@ -307,7 +307,7 @@ void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
             output[4] = output1[6];
             output[5] = output1[10];
         
-            output += 6;
+            output += 8;
 
 
         }
@@ -431,8 +431,105 @@ void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict out
 
 //cov2D computation
 template <const int GAUSSIAN_SIZE>
-void get_conv2D(bf16 * mats, bf16 *restrict cov3D, bf16 *restrict output){
+void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
     
+    event1();
+    for(size_t i = 0; i < GAUSSIAN_SIZE / 16; i++){
+        
+        aie::vector<bf16, 16> vec_cov2D_0_0 = aie::zeros<bf16,16>();
+        aie::vector<bf16, 16> vec_cov2D_0_1 = aie::zeros<bf16,16>();
+        aie::vector<bf16, 16> vec_cov2D_1_1 = aie::zeros<bf16,16>();
+        event0();
+        for(size_t j = 0; j < 16; j++){
+
+            // we want to load as 6 elements, but aie load only support 4/8/16/etc...
+            aie::vector<bf16, 8> cov3D_loaded = aie::load_v<8>(cov3D);
+
+        
+            // load cov3D and put into vector
+            aie::vector<bf16, 16> cov3D_vec = aie::zeros<bf16,16>();
+
+            // load mat
+            aie::vector<bf16, 8> mat_loaded = ::aie::load_v<8>(JR);
+            JR += 8;
+
+            float test = 3;
+            bf16 testb = test;
+            
+
+            cov3D_vec[0] = cov3D_loaded[0];
+            cov3D_vec[1] = cov3D_loaded[1];
+            cov3D_vec[2] = cov3D_loaded[2];
+            cov3D_vec[4] = cov3D_loaded[1];
+            cov3D_vec[5] = cov3D_loaded[3];
+            cov3D_vec[6] = cov3D_loaded[4];
+            cov3D_vec[8] = cov3D_loaded[2];
+            cov3D_vec[9] = cov3D_loaded[4];
+            cov3D_vec[10] = cov3D_loaded[5];
+            cov3D += 8;
+
+            //copy it
+            aie::vector<bf16, 8> mat_loaded2 = mat_loaded;
+            //disguise after 3 elements
+            mat_loaded[4] = mat_loaded[0];
+            mat_loaded[5] = mat_loaded[1];
+            mat_loaded[6] = mat_loaded[2];
+
+            mat_loaded2[0] = mat_loaded2[4];
+            mat_loaded2[1] = mat_loaded2[5];
+            mat_loaded2[2] = mat_loaded2[6];
+        
+            aie::vector<bf16, 16> mat_vec1 = aie::concat(mat_loaded, mat_loaded);
+            aie::vector<bf16, 16> mat_vec2 = aie::concat(mat_loaded2, mat_loaded2);
+
+            aie::vector<bf16, 16> mat_vec1_trans = aie::transpose(mat_vec1, 4, 4);
+            aie::vector<bf16, 16> mat_vec2_trans = aie::transpose(mat_vec2, 4, 4);
+
+
+
+            // we only need to do accum and reduce add
+            aie::vector<bf16, 16> cov2D_accum = aie::zeros<bf16,16>();
+            cov2D_accum = aie::mul(aie::mul(cov3D_vec, mat_vec1_trans).to_vector<bf16>(), mat_vec1);
+            vec_cov2D_0_0[j] = aie::reduce_add(cov2D_accum);
+
+            cov2D_accum = aie::zeros<bf16,16>();
+            cov2D_accum = aie::mul(aie::mul(cov3D_vec, mat_vec2_trans).to_vector<bf16>(), mat_vec1);
+            vec_cov2D_0_1[j] = aie::reduce_add(cov2D_accum);
+
+            cov2D_accum = aie::zeros<bf16,16>();
+            cov2D_accum = aie::mul(aie::mul(cov3D_vec, mat_vec2_trans).to_vector<bf16>(), mat_vec2);
+            vec_cov2D_1_1[j] = aie::reduce_add(cov2D_accum);
+
+        }
+        vec_cov2D_0_0 = aie::add(vec_cov2D_0_0, bf16(0.3));
+        vec_cov2D_1_1 = aie::add(vec_cov2D_1_1, bf16(0.3));
+        aie::vector<bf16, 16> vec_cov2D_0_1_minus = aie::mul(vec_cov2D_0_1, bf16(-1));
+
+        // compute det
+        aie::accum<accfloat, 16> det_accum = aie::mul(vec_cov2D_0_0, vec_cov2D_1_1);
+        det_accum = aie::mac(det_accum, vec_cov2D_0_1, vec_cov2D_0_1_minus);
+        
+        aie::vector<bf16, 16> det_vec = det_accum.to_vector<bf16>();
+        aie::vector<bf16, 16> inv_det_vec = aie::div(aie::broadcast<bf16,16>(bf16(1.0)), det_vec);
+
+        // compute inverse
+        aie::vector<bf16, 16> inv_cov2D_0_0 = aie::mul(vec_cov2D_1_1, inv_det_vec);
+        aie::vector<bf16, 16> inv_cov2D_0_1 = aie::mul(aie::mul(vec_cov2D_0_1, inv_det_vec).to_vector<bf16>(), bf16(-1));
+        aie::vector<bf16, 16> inv_cov2D_1_1 = aie::mul(vec_cov2D_0_0, inv_det_vec);
+
+        // calc eigenvalue
+        aie::vector<bf16, 16> b = aie::mul(aie::add(vec_cov2D_0_0, vec_cov2D_1_1), bf16(0.5));
+        aie::vector<bf16, 16> sqrt_term = aie::sqrt(aie::max(aie::sub(aie::mul(b, b).to_vector<bf16>(), det_vec), bf16(0.1)));
+        aie::vector<bf16, 16> radius = aie::add(aie::mul(aie::sqrt(aie::add(b, sqrt_term)), bf16(3)), bf16(0));
+
+        //pack and store
+        aie::vector<bf16, 64> packed_untransposed = aie::concat(aie::concat(inv_cov2D_0_0, inv_cov2D_0_1), aie::concat(inv_cov2D_1_1, radius));
+        //transpose
+        aie::vector<bf16, 64> packed_transposed = aie::transpose(packed_untransposed, 4, 16);
+        aie::store_v(output, packed_transposed);
+        output += 64;
+
+    }
     return;
 }
 
@@ -445,4 +542,6 @@ void f32_get_camera_pos(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { get_camer
 void f32_get_conv3D(bf16 *rot_in, bf16 *out) { get_conv3D<TILE_SIZE / CONV3D_TILE_NUM>(rot_in, out); }
 
 void f32_get_J_R(bf16 *params_in, bf16 *pos_in, bf16 *out) { get_J_R<TILE_SIZE>(params_in, pos_in, out); }
+
+void f32_get_conv2D(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_SIZE>(JR_in, cov3D_in, out); }
 } // extern "C"

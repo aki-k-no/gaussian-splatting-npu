@@ -21,6 +21,7 @@
 #include <Eigen/Dense>
 #include <cstdint>
 #include <chrono>
+#include <cmath>
 
 #include "opencv2/opencv.hpp"
 
@@ -85,7 +86,7 @@ void setup_npu(int argc, const char *argv[]){
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
     bo_inB = xrt::bo(device, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    bo_outC = xrt::bo(device, CHUNK_SIZE * 20 * sizeof(DATATYPE_OUT),
+    bo_outC = xrt::bo(device, CHUNK_SIZE * 10 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
                             
 
@@ -152,7 +153,6 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         auto end_npu = std::chrono::steady_clock::now();
         auto diff_npu = std::chrono::duration_cast<std::chrono::microseconds>(end_npu - start_npu);
         tmp += diff_npu.count();
-        std::cout << "NPU Elapsed" << diff_npu.count() << " micro sec\n";
     
         // extract the data and save
         
@@ -164,32 +164,19 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                     // save to gaussians, for now...
                     Gaussian3D &g = group.gaussians[i*CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k];
                 
-                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + j*16 + k * 4]);
-                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + j*16 + k * 4 + 1]);
-                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + j*16 + k * 4 + 2]);
+                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + j*16 + k * 4]);
+                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + j*16 + k * 4 + 1]);
+                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + j*16 + k * 4 + 2]);
                     
-                    g.screen_coord[0] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 4 + j*8 + k]) + 1) * 0.5 * cam.width - 0.5;
-                    g.screen_coord[1] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 4 + j*8 + k + 4]) + 1) * 0.5 * cam.height - 0.5;
+                    g.screen_coord[0] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 4 + j*8 + k]) + 1) * 0.5 * cam.width - 0.5;
+                    g.screen_coord[1] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 4 + j*8 + k + 4]) + 1) * 0.5 * cam.height - 0.5;
 
-                    float a_0_0 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 14 + (j*4 + k) * 6]);
-                    float a_0_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 14 + (j*4 + k) * 6 + 1]);
-                    float a_0_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 14 + (j*4 + k) * 6 + 2]);
-                    float a_1_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 14 + (j*4 + k) * 6 + 3]);
-                    float a_1_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 14 + (j*4 + k) * 6 + 4]);
-                    float a_2_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 14 + (j*4 + k) * 6 + 5]);
-                    g.covariance3D << a_0_0, a_0_1, a_0_2,
-                                            a_0_1, a_1_1, a_1_2,
-                                            a_0_2, a_1_2, a_2_2;
-                    float b_0_0 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 6 + (j*4 + k) * 8]);
-                    float b_0_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 6 + (j*4 + k) * 8 + 1]);
-                    float b_0_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 6 + (j*4 + k) * 8 + 2]);
-                    float b_1_0 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 6 + (j*4 + k) * 8 + 4]);
-                    float b_1_1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 6 + (j*4 + k) * 8 + 5]);
-                    float b_1_2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 20 + TILE_SIZE * 6 + (j*4 + k) * 8 + 6]);
-                    
-                    g.J_R << b_0_0, b_0_1, b_0_2,
-                                b_1_0, b_1_1, b_1_2,
-                                0, 0, 0;
+                    float a1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 6 + (j*4 + k) * 4]);
+                    float a2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 6 + (j*4 + k) * 4 + 1]);
+                    float a3 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 6 + (j*4 + k) * 4 + 2]);
+                    g.inv_cov_2d << a1, a2,
+                                   a2, a3;
+                    g.radius = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 6 + (j*4 + k) * 4 + 3]);
                     
 
                 }
@@ -215,6 +202,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
         g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
+
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
         
@@ -239,7 +227,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
             continue;
         }
 
-        #ifndef __USE_NPU
+        // #ifndef __USE_NPU
         Eigen::Matrix3f R;
         // convert quaternion to rotation matrix
         Eigen::Vector<float, 4> Rot;
@@ -269,9 +257,6 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
              0.0f, cam.fy / _z, -cam.fy * g.xyz_view[1] / (_z * _z),
              0.f, 0.f, 0.f;
         g.J_R = J * cam.world_to_view.block<3,3>(0,0);
-        #endif
-        
-        
 
         Eigen::Matrix3f covariance2D = g.J_R * g.covariance3D * g.J_R.transpose(); 
         constexpr float h_var = 0.3f;
@@ -288,6 +273,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         float det = det_cov_plus_h_cov;
         float det_inv = 1.f / det;
         // we use this afterwards
+        g.inv_cov_2d_sample = g.inv_cov_2d;
         g.inv_cov_2d << covariance2D(1,1) * det_inv, -covariance2D(1,0) * det_inv,
                         -covariance2D(1,0) * det_inv, covariance2D(0,0) * det_inv;
 
@@ -296,12 +282,13 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     	float b = 0.5f * (covariance2D(0,0) + covariance2D(1,1));
         // short/long diameter
 	    float lambda1 = b + std::sqrt(std::max(0.1f, b * b - det));
-	    float lambda2 = b - std::sqrt(std::max(0.1f, b * b - det));
-	    float radius = std::ceil(3.f * std::sqrt(std::max(lambda1, lambda2)));
+	    //float lambda2 = b - std::sqrt(std::max(0.1f, b * b - det));
+        g.radius = std::ceil(3.f * std::sqrt(lambda1));
+        // #endif
         // get related tiles
         std::array<float, 2> rect_min;
         std::array<float, 2> rect_max;
-        getRelatedTiles(g.screen_coord, radius, rect_min, rect_max, grid);
+        getRelatedTiles(g.screen_coord, g.radius, rect_min, rect_max, grid);
         if ((rect_max[0] - rect_min[0]) * (rect_max[1] - rect_min[1]) == 0)
 		    continue; // Gaussian does not contribute to the image, skip
 
@@ -401,10 +388,11 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                         diff[1] = pixel_y + 0.5f - g.screen_coord[1];
                        
                         float exponent = -0.5f * diff.transpose() * g.inv_cov_2d * diff;
-                        if(exponent > 0.f){
+                        float test = -0.5f * diff.transpose() * g.inv_cov_2d_sample * diff;
+                        if(test > 0.f || std::isnan(test)){
                             continue;
                         }
-                        float weight = std::exp(exponent); // prevent overflow
+                        float weight = std::exp(test); // prevent overflow
                         float alpha = std::min(0.99f, g.opacity * weight);
                         
             			if (alpha < 1.0f / 255.0f)
@@ -448,6 +436,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
 
 
 int main(int argc, const char *argv[]){
+
 
 
     Eigen::Matrix4f baseMat_W2C;

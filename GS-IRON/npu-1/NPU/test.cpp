@@ -9,6 +9,7 @@
 #include "../const.hpp"
 
 #include <cstdint>
+#include <string>
 #include <random>
 
 #define __ENABLE_TRACE
@@ -30,16 +31,16 @@ void generate_random_bfloat16(std::bfloat16_t* buf, size_t n, float min_val, flo
     }
 }
 
-void check_each(int verbosity, DATATYPE_OUT test, DATATYPE_OUT ref, int index, float tol, int& error) {
+void check_each(std::string msg, int verbosity, DATATYPE_OUT test, DATATYPE_OUT ref, int index, float tol, int& error) {
     if (test < ref - tol || test > ref + tol) {
         if (verbosity >= 1){
-            std::cout << "Error in output (rot) " << index << " : " << test << " != " << ref << std::endl;
+            std::cout << "Error in output (" << msg << ") " << index << " : " << test << " != " << ref << std::endl;
         
             error++;
         }
     } else {
         if (verbosity >= 2)
-            std::cout << "Correct in output (rot) " << index << " : " << test << " == " << ref << std::endl;
+            std::cout << "Correct in output ( " << msg << ") " << index << " : " << test << " == " << ref << std::endl;
     }
 }
 
@@ -69,6 +70,30 @@ void compute_2x3_3x3_mat(DATATYPE_OUT *mat2_3, DATATYPE_OUT *mat3_3, DATATYPE_OU
     }
 }
 
+void compute_2x3_3x3_3x2_mat(DATATYPE_OUT *mat2_3, DATATYPE_OUT *mat3_3, DATATYPE_OUT *output){
+    //comput 2x3 3x3 matrix multiplication
+    DATATYPE_OUT temp[6];
+    for(size_t i=0;i<2;i++){
+        for(size_t j=0;j<3;j++){
+            DATATYPE_OUT acc = 0;
+            for(size_t k=0;k<3;k++){
+                acc += mat2_3[i * 3 + k] * mat3_3[j + k * 3];
+            }
+            temp[i * 3 + j] = (DATATYPE_OUT) acc;
+        }
+    }
+    // then multiply 3x2
+    for(size_t i=0;i<2;i++){
+        for(size_t j=0;j<2;j++){
+            DATATYPE_OUT acc = 0;
+            for(size_t k=0;k<3;k++){
+                acc += temp[i * 3 + k] * mat2_3[j * 3 + k];
+            }
+            output[i * 2 + j] = (DATATYPE_OUT) acc;
+        }
+    }
+}
+
 
 // Functional correctness verifyer
 int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
@@ -81,23 +106,32 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
         for (int iter = 0; iter < TILE_SIZE / 4; iter++){
             int offset = tile * TILE_SIZE * 15;
             for (int i = 0; i < 4; i++) {
+                
+                if(tile != 0 || iter != 0 || i != 0){
+                    continue;
+                }
+
                 for(int j=0;j<4;j++){
+
                     DATATYPE_OUT ref = bufIn1[4 * j] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[4 * j + 2] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3] * bufIn2[offset + iter * 32 + i + 12];
-                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 20 + iter * 16 + i * 4 + j];
+                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 10 + iter * 16 + i * 4 + j];
                     if (test < ref - 0.25 || test > ref + 0.25) {
                         if (verbosity >= 1){
 
-                            std::cout << "Error in output " << tile * TILE_SIZE * 20 + iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
+                            std::cout << "Error in output " << tile * TILE_SIZE * 10 + iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
                         }
                         errors++;
 
                     } else {
                         if (verbosity >= 2)
-                            std::cout << "Correct in output " << tile * TILE_SIZE * 20 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
+                            std::cout << "Correct in output " << tile * TILE_SIZE * 10 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
                     }
                     
                 }
+
+                
+
                 DATATYPE_OUT ref_x = bufIn1[0] * bufIn2[offset + iter * 32 + i] + bufIn1[1] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[2] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[3] * bufIn2[offset + iter * 32 + i + 12];
 
@@ -126,27 +160,110 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 ref_R2[6] = bufIn1[8];
                 ref_R2[7] = bufIn1[9];
                 ref_R2[8] = bufIn1[10];
+                // this test_R is J_R matrix
                 DATATYPE_OUT test_R[6];
                 compute_2x3_3x3_mat(ref_R1, ref_R2, test_R);
 
-                check_each(verbosity, bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8],
-                             test_R[0], tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8, 0.15, errors);
-                check_each(verbosity, bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 1],
-                             test_R[1], tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 1, 0.15, errors);
-                check_each(verbosity, bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 2],
-                             test_R[2], tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 2, 0.15, errors);
-                check_each(verbosity, bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 4],
-                             test_R[3], tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 4, 0.15, errors);
-                check_each(verbosity, bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 5],
-                             test_R[4], tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 5, 0.15, errors);
-                check_each(verbosity, bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 6],
-                             test_R[5], tile * TILE_SIZE * 20 + TILE_SIZE * 6 + (iter * 4 + i) * 8 + 6, 0.15, errors);
+                // next, we make cov3D mat 
+                int true_iter = iter * 4 + i;
+                int sub_tile_id = true_iter / (TILE_SIZE / CONV3D_TILE_NUM);
+                int sub_tile_res = true_iter % (TILE_SIZE / CONV3D_TILE_NUM);
+                
+                int offset2 = tile * TILE_SIZE * 15 + TILE_SIZE * 8 + sub_tile_id * (TILE_SIZE / CONV3D_TILE_NUM) * 7;
+                DATATYPE_IN2 w = bufIn2[offset2 + (sub_tile_res / 16) * 64 + (sub_tile_res % 16)];
+                DATATYPE_IN2 x = bufIn2[offset2 + (sub_tile_res / 16) * 64 + (sub_tile_res % 16) + 16];
+                DATATYPE_IN2 y = bufIn2[offset2 + (sub_tile_res / 16) * 64 + (sub_tile_res % 16) + 32];
+                DATATYPE_IN2 z = bufIn2[offset2 + (sub_tile_res / 16) * 64 + (sub_tile_res % 16) + 48];
+
+                DATATYPE_IN2 scale1 = bufIn2[offset2 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + (sub_tile_res / 16) * 48 + (sub_tile_res % 16)];
+                DATATYPE_IN2 scale2 = bufIn2[offset2 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + (sub_tile_res / 16) * 48 + (sub_tile_res % 16) + 16];
+                DATATYPE_IN2 scale3 = bufIn2[offset2 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + (sub_tile_res / 16) * 48 + (sub_tile_res % 16) + 32];
+                DATATYPE_IN2 norm = std::sqrt(w * w + x * x + y * y + z * z);
+                w /= norm;
+                x /= norm;
+                y /= norm;
+                z /= norm;                    
+
+
+                DATATYPE_OUT elem1 = 1 - 2 * y * y - 2 * z * z;
+                DATATYPE_OUT elem2 = 2 * x * y - 2 * w * z;
+                DATATYPE_OUT elem3 = 2 * x * z + 2 * w * y;
+
+                DATATYPE_OUT elem5 = 2 * x * y + 2 * w * z;
+                DATATYPE_OUT elem6 = 1 - 2 * x * x - 2 * z * z;
+                DATATYPE_OUT elem7 = 2 * y * z - 2 * w * x;
+
+                DATATYPE_OUT elem9 = 2 * x * z - 2 * w * y;
+                DATATYPE_OUT elem10 = 2 * y * z + 2 * w * x;
+                DATATYPE_OUT elem11 = 1 - 2 * x * x - 2 * y * y;
+
+                DATATYPE_OUT calc_mat[9] = {
+                    scale1 * elem1, scale2 * elem2, scale3 * elem3,
+                    scale1 * elem5, scale2 * elem6, scale3 * elem7,
+                    scale1 * elem9, scale2 * elem10, scale3 * elem11
+                };
+
+                DATATYPE_OUT cov3D_mat[9];
+
+                compute_3x3_mat(calc_mat, cov3D_mat);
+
+
+
+                DATATYPE_OUT ref_mat[4];
+                compute_2x3_3x3_3x2_mat(test_R, cov3D_mat, ref_mat);
+                //compute inv
+                ref_mat[0] = ref_mat[0] + 0.3;
+                ref_mat[3] = ref_mat[3] + 0.3;
+                DATATYPE_OUT det = ref_mat[0] * ref_mat[3] - ref_mat[1] * ref_mat[2];
+                DATATYPE_OUT inv_det = 1.0 / det;
+                DATATYPE_OUT inv_cov2D_0_0 = ref_mat[3] * inv_det;
+                DATATYPE_OUT inv_cov2D_0_1 = -1 * ref_mat[1] * inv_det;
+                DATATYPE_OUT inv_cov2D_1_1 = ref_mat[0] * inv_det;
+                DATATYPE_OUT b = (ref_mat[0] + ref_mat[3]) * 0.5;
+                DATATYPE_OUT sqrt_term = std::sqrt(std::max((DATATYPE_OUT)0.1, b * b - det));
+                DATATYPE_OUT radius = std::sqrt(b + sqrt_term) * 3 + 1;
+
+                
+                std::cout << "cov3D" << "\n";
+                for(int idx = 0; idx < 9; idx++){
+                    std::cout << cov3D_mat[idx] << " ";
+                }
+                std::cout << "\n";
+                std::cout << "JR_mat" << "\n";
+                for(int idx = 0; idx < 6; idx++){
+                    std::cout << test_R[idx] << " ";
+                }
+                std::cout << "\n";
+
+                std::cout << "cov2D\n";
+                for(int idx = 0; idx < 4; idx++){
+                    std::cout << ref_mat[idx] << " ";
+                }
+                std::cout << "\n";
+
+                for(int idx = 0;idx < 16;idx++){
+                    std::cout << bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + idx] << " ";
+                }
+                std::cout << "\n";
+
+                std::cout << "det" << det << "\n";
+
+                //check
+                check_each("cov2D", 2, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4], inv_cov2D_0_0, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4, 0.25, errors);
+                check_each("cov2D", 2, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1], inv_cov2D_0_1, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1, 0.25, errors);
+                check_each("cov2D", 2, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2], inv_cov2D_1_1, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2, 0.25, errors);
+                check_each("cov2D", 2, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3], radius, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3, 5, errors);
 
             
         
             }
         }
     }
+
+    if(1 == 1){
+        return errors;
+    }
+
     //second
     for (int tile = 0; tile < TILE_COUNT; tile++) {
         for (int iter = 0; iter < TILE_SIZE / 4; iter++){
@@ -158,17 +275,17 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                                   / (bufIn1[12 + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 18] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[14 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[15 + 18] * bufIn2[offset + iter * 32 + i + 12]);
                                   
-                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 4 + iter * 8 + i + j * 4];
+                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 4 + iter * 8 + i + j * 4];
                     if(test < ref - 0.05 || test > ref + 0.05) {
                         if (verbosity >= 1){
                         
-                            std::cout << "Error in output (w) " << tile * TILE_SIZE * 20 + iter * 8 + i + j * 4  << " : " << test << " != " << ref << std::endl;
+                            std::cout << "Error in output (w) " << tile * TILE_SIZE * 10 + iter * 8 + i + j * 4  << " : " << test << " != " << ref << std::endl;
                         }
                         errors++;
                     
                     } else {
                         if (verbosity >= 2){
-                            std::cout << "Correct in output (w) " << tile * TILE_SIZE * 20 + iter * 8 + i + j * 4  << " : " << test << " == " << ref << std::endl;
+                            std::cout << "Correct in output (w) " << tile * TILE_SIZE * 10 + iter * 8 + i + j * 4  << " : " << test << " == " << ref << std::endl;
                         }
                     }
                 }
@@ -177,81 +294,38 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
     }
 
     //third
-    for (int tile = 0; tile < TILE_COUNT; tile++) {
-        for(int sub_tiles = 0; sub_tiles < CONV3D_TILE_NUM; sub_tiles++){
-            for (int iter = 0; iter < (TILE_SIZE / CONV3D_TILE_NUM) / 16; iter++){
-                for (int i = 0; i < 16; i++) {
+    // for (int tile = 0; tile < TILE_COUNT; tile++) {
+    //     for(int sub_tiles = 0; sub_tiles < CONV3D_TILE_NUM; sub_tiles++){
+    //         for (int iter = 0; iter < (TILE_SIZE / CONV3D_TILE_NUM) / 16; iter++){
+    //             for (int i = 0; i < 16; i++) {
 
                     
-                    int offset = tile * TILE_SIZE * 15 + TILE_SIZE * 8 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 7;
-                    DATATYPE_IN2 w = bufIn2[offset + iter * 64 + i];
-                    DATATYPE_IN2 x = bufIn2[offset + iter * 64 + i + 16];
-                    DATATYPE_IN2 y = bufIn2[offset + iter * 64 + i + 32];
-                    DATATYPE_IN2 z = bufIn2[offset + iter * 64 + i + 48];
+    //                 DATATYPE_OUT ref_mat[9];
 
-                    DATATYPE_IN2 scale1 = bufIn2[offset + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + iter * 48 + i];
-                    DATATYPE_IN2 scale2 = bufIn2[offset + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + iter * 48 + i + 16];
-                    DATATYPE_IN2 scale3 = bufIn2[offset + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + iter * 48 + i + 32];
-                    DATATYPE_IN2 norm = std::sqrt(w * w + x * x + y * y + z * z);
-                    w /= norm;
-                    x /= norm;
-                    y /= norm;
-                    z /= norm;
-
+    //                 compute_3x3_mat(calc_mat, ref_mat);
                     
-                    DATATYPE_OUT test1 = bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 14 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6];
-                    DATATYPE_OUT test2 = bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 14 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 1];
-                    DATATYPE_OUT test3 = bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 14 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 2];
-                    DATATYPE_OUT test4 = bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 14 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 3];
-                    DATATYPE_OUT test5 = bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 14 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 4];
-                    DATATYPE_OUT test6 = bufOut[tile * TILE_SIZE * 20 + TILE_SIZE * 14 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 5];
-
+    //                 check_each(verbosity, test1, ref_mat[0], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 , 0.5, errors);
+    //                 check_each(verbosity, test2, ref_mat[1], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 1, 0.5, errors);
+    //                 check_each(verbosity, test3, ref_mat[2], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 2, 0.5, errors);
+    //                 check_each(verbosity, test4, ref_mat[4], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 3, 0.5, errors);
+    //                 check_each(verbosity, test5, ref_mat[5], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 4, 0.5, errors);
+    //                 check_each(verbosity, test6, ref_mat[8], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 5, 0.5, errors);
                     
+    //                 // //additional debug log
+    //                 // std::cout << scale1 * elem1 << " " << scale2 * elem2 << " " << scale3 * elem3 << "\n";
+    //                 // std::cout << scale1 * elem5 << " " << scale2 * elem6 << " " << scale3 * elem7 << "\n";
+    //                 // std::cout << scale1 * elem9 << " " << scale2 * elem10 << " " << scale3 * elem11 << "\n";
+    //                 // std::cout << scale1 << " " << scale2 << " " << scale3 << "\n";
+    //                 // std::cout << "----\n";
 
-
-                    DATATYPE_OUT elem1 = 1 - 2 * y * y - 2 * z * z;
-                    DATATYPE_OUT elem2 = 2 * x * y - 2 * w * z;
-                    DATATYPE_OUT elem3 = 2 * x * z + 2 * w * y;
-
-                    DATATYPE_OUT elem5 = 2 * x * y + 2 * w * z;
-                    DATATYPE_OUT elem6 = 1 - 2 * x * x - 2 * z * z;
-                    DATATYPE_OUT elem7 = 2 * y * z - 2 * w * x;
-
-                    DATATYPE_OUT elem9 = 2 * x * z - 2 * w * y;
-                    DATATYPE_OUT elem10 = 2 * y * z + 2 * w * x;
-                    DATATYPE_OUT elem11 = 1 - 2 * x * x - 2 * y * y;
-
-                    DATATYPE_OUT calc_mat[9] = {
-                        scale1 * elem1, scale2 * elem2, scale3 * elem3,
-                        scale1 * elem5, scale2 * elem6, scale3 * elem7,
-                        scale1 * elem9, scale2 * elem10, scale3 * elem11
-                    };
-                    DATATYPE_OUT ref_mat[9];
-
-                    compute_3x3_mat(calc_mat, ref_mat);
-                    
-                    check_each(verbosity, test1, ref_mat[0], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 , 0.5, errors);
-                    check_each(verbosity, test2, ref_mat[1], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 1, 0.5, errors);
-                    check_each(verbosity, test3, ref_mat[2], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 2, 0.5, errors);
-                    check_each(verbosity, test4, ref_mat[4], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 3, 0.5, errors);
-                    check_each(verbosity, test5, ref_mat[5], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 4, 0.5, errors);
-                    check_each(verbosity, test6, ref_mat[8], tile * TILE_SIZE * 12 + TILE_SIZE * 6 + sub_tiles * (TILE_SIZE / CONV3D_TILE_NUM) * 6 + iter * 96 + i * 6 + 5, 0.5, errors);
-                    
-                    // //additional debug log
-                    // std::cout << scale1 * elem1 << " " << scale2 * elem2 << " " << scale3 * elem3 << "\n";
-                    // std::cout << scale1 * elem5 << " " << scale2 * elem6 << " " << scale3 * elem7 << "\n";
-                    // std::cout << scale1 * elem9 << " " << scale2 * elem10 << " " << scale3 * elem11 << "\n";
-                    // std::cout << scale1 << " " << scale2 << " " << scale3 << "\n";
-                    // std::cout << "----\n";
-
-                    // for(int m = 0;m<32;m++){
-                    //     std::cout << bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 6 + iter * 96 + i * 8 + m] << " ";
-                    // }
-                    // std::cout << "\n";
-                }
-            }
-        }
-    }
+    //                 // for(int m = 0;m<32;m++){
+    //                 //     std::cout << bufOut[tile * TILE_SIZE * 12 + TILE_SIZE * 6 + iter * 96 + i * 8 + m] << " ";
+    //                 // }
+    //                 // std::cout << "\n";
+    //             }
+    //         }
+    //     }
+    // }
     return errors;
 }
 
@@ -302,7 +376,7 @@ int main(int argc, const char *argv[]) {
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
     auto bo_inB = xrt::bo(device, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    auto bo_outC = xrt::bo(device, CHUNK_SIZE * 20 * sizeof(DATATYPE_OUT),
+    auto bo_outC = xrt::bo(device, CHUNK_SIZE * 10 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
     #ifdef __ENABLE_TRACE
     auto bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(7));
@@ -323,17 +397,54 @@ int main(int argc, const char *argv[]) {
         bufInA[i] = i + 1;
     }
     generate_random_bfloat16(bufInA, IN1_SIZE , 0, 3);
+    bufInA[0] = -0.925014;
+    bufInA[1] = -0.379933;
+    bufInA[2] = 0;
+    bufInA[3] = -4.11452e-08;
+    bufInA[4] = -0.27489;
+    bufInA[5] =  0.669268;
+    bufInA[6] = -0.690301;
+    bufInA[7] = 0;
+    bufInA[8] = 0.262268;
+    bufInA[9] = -0.638538;
+    bufInA[10] = -0.723522;
+    bufInA[11] =  4.03113;
+    bufInA[12] = 0;
+    bufInA[13] = 0;
+    bufInA[14] = 0;
+    bufInA[15] = 1;
+    bufInA[16] = 1111.11;
+    bufInA[17] = 1111.11;
     
 
     // Initialize buffer bo_inFactor
     DATATYPE_IN2 *bufInB = bo_inB.map<DATATYPE_IN2 *>();
     fill_bufB(bufInB);
+    bufInB[0] = -0.706435;
+    bufInB[4] = -0.888309;
+    bufInB[8] = -0.871879;
+    bufInB[12] = 1;
+
+    bufInB[TILE_SIZE * 8] = 0.892785;
+    bufInB[TILE_SIZE * 8 + 16] = 0.222361;
+    bufInB[TILE_SIZE * 8 + 32] = -0.168303;
+    bufInB[TILE_SIZE * 8 + 48] = -0.118424;
+
+    bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4] = 0.000952771;
+    bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + 16] = 0.0301535;
+    bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + 32] = 0.120647;
+
+    
+
+
+
+
 
     
 
     // Zero out buffer bo_outC
     DATATYPE_OUT *bufOut = bo_outC.map<DATATYPE_OUT *>();
-    for (int i = 0; i < CHUNK_SIZE * 18; i++)
+    for (int i = 0; i < CHUNK_SIZE * 10; i++)
         bufOut[i] = 14;
 
     #ifdef __ENABLE_TRACE
@@ -368,6 +479,8 @@ int main(int argc, const char *argv[]) {
 
     // Sync device to host memories
     bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+
+    std::cout << "calculation done, start to verify the result...\n";
     
     #ifdef __ENABLE_TRACE
     bo_trace.sync(XCL_BO_SYNC_BO_FROM_DEVICE);

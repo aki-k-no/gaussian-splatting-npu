@@ -20,8 +20,12 @@ struct Gaussian3D {
     std::array<float, 2> screen_coord; // screen coordinates
     Eigen::Vector3f color;         // RGB color
     Eigen::Matrix2f inv_cov_2d;    // Inverse of 2D covariance matrix
+    Eigen::Matrix2f inv_cov_2d_sample;    // Inverse of 2D covariance matrix
+    float radius;                  // Radius for splatting
     Eigen::Matrix3f covariance3D;  // 3D covariance matrix
     Eigen::Matrix<float, 3, 3> J_R;     // Jacobian from 3D to 2D
+
+    int index;
 };
 
 // Container for loaded Gaussians
