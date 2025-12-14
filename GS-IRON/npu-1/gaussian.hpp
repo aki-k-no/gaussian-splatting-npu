@@ -22,12 +22,14 @@ struct Gaussian3D {
     Eigen::Matrix2f inv_cov_2d;    // Inverse of 2D covariance matrix
     Eigen::Matrix3f covariance3D;  // 3D covariance matrix
     Eigen::Matrix<float, 3, 3> J_R;     // Jacobian from 3D to 2D
+    int index;
 };
 
 // Container for loaded Gaussians
+// Container for loaded Gaussians
 struct GaussianGroup {
     std::vector<Gaussian3D> gaussians;
-    std::bfloat16_t* xyz_buf;
+    std::vector<std::bfloat16_t> xyz_buf;
 };
 
 #endif // GAUSSIAN_H

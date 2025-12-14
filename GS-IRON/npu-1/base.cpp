@@ -101,17 +101,7 @@ void setup_npu(int argc, const char *argv[]){
 }
 
 
-void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_name){
-
-    // load gaussians from file
-    GaussianGroup group = loadGaussiansFromFile(ply_name);
-    
-
-
-
-    // initialize camera
-    Camera cam;
-    load_camera(cam, baseMat_W2C);
+void render(GaussianGroup &group, Camera &cam, std::string img_name){
     
     auto start = std::chrono::steady_clock::now();
 
@@ -137,7 +127,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     for(int i=0; i < (numGaussians - 1) / CHUNK_SIZE + 1; i++){
 
         //copy the data first
-        memcpy(bufInB, group.xyz_buf + i * CHUNK_SIZE * 15, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2));
+        memcpy(bufInB, group.xyz_buf.data() + i * CHUNK_SIZE * 15, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2));
         auto start_npu = std::chrono::steady_clock::now();
         bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
@@ -441,8 +431,6 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     image.convertTo(display, CV_8UC3, 255.0);
     cv::imwrite(img_name, display);
 
-    delete[] group.xyz_buf;
-    group.xyz_buf = nullptr;
 
 }
 
@@ -458,8 +446,44 @@ int main(int argc, const char *argv[]){
 
     setup_npu(argc, argv);
 
+    std::string path = "chair";
 
-    render("point_cloud.ply", baseMat_W2C , "output.png");
+
+    
+    // load gaussians from file
+    std::string ply_name = path + "/point_cloud.ply";
+    
+    GaussianGroup group;
+    loadGaussiansFromFile(ply_name, group);
+
+    
+
+    // initialize camera
+    std::vector<Eigen::Matrix4f> rotations;
+    load_from_file(path, rotations);
+
+
+    #ifdef __USE_NPU
+    path = path + "/npu";
+    #else
+    path = path + "/cpu";
+    #endif
+
+    for(int i=0;i<rotations.size();i++){
+        Camera cam;
+        load_camera(cam, rotations[i]);
+        render(group, cam , path + "/output" + std::to_string(i) + ".png");
+    }
+
+
+    // {
+    //     std::ofstream ofs("data.csv");
+    //     if (ofs) {
+    //         for (const auto &v : deviation) {
+    //             ofs << v << ',';
+    //         }
+    //     }
+    // }
 
 
 }

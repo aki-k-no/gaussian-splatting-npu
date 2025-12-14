@@ -12,7 +12,7 @@
 
 #include <aie_api/aie.hpp>
 #include <aie_api/detail/aie2/transpose.hpp>
-#include <lut_based_ops.h>
+// #include <lut_based_ops.h>
 #include <stdint.h>
 #include "../const.hpp"
 // #include <stdio.h>

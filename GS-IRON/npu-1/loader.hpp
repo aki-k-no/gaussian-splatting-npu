@@ -4,6 +4,6 @@
 #include "gaussian.hpp"
 #include <string>
 
-GaussianGroup loadGaussiansFromFile(const std::string &filename);
+void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group);
 
 #endif
