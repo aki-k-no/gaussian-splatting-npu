@@ -31,7 +31,7 @@ struct Gaussian3D {
 // Container for loaded Gaussians
 struct GaussianGroup {
     std::vector<Gaussian3D> gaussians;
-    std::bfloat16_t* xyz_buf;
+    std::vector<std::bfloat16_t> xyz_buf;
 };
 
 #endif // GAUSSIAN_H

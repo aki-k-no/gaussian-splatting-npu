@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 
 #include "opencv2/opencv.hpp"
 
@@ -54,6 +55,9 @@ DATATYPE_IN2 *bufInB;
 DATATYPE_OUT *bufOut;
 
 unsigned int opcode = 3;
+
+
+std::vector<float> deviation;
 
 void setup_npu(int argc, const char *argv[]){
 
@@ -102,20 +106,9 @@ void setup_npu(int argc, const char *argv[]){
 }
 
 
-void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_name){
-
-    // load gaussians from file
-    GaussianGroup group = loadGaussiansFromFile(ply_name);
-    
-
-
-
-    // initialize camera
-    Camera cam;
-    load_camera(cam, baseMat_W2C);
+void render(GaussianGroup &group, Camera &cam, std::string img_name){
     
     auto start = std::chrono::steady_clock::now();
-
 
     // determine grid size    
     std::array<int, 2> grid = {cam.width / GRID_SIZE_X, cam.height / GRID_SIZE_Y};
@@ -138,7 +131,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     for(int i=0; i < (numGaussians - 1) / CHUNK_SIZE + 1; i++){
 
         //copy the data first
-        memcpy(bufInB, group.xyz_buf + i * CHUNK_SIZE * 15, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2));
+        memcpy(bufInB, group.xyz_buf.data() + i * CHUNK_SIZE * 15, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2));
         auto start_npu = std::chrono::steady_clock::now();
         bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
@@ -192,7 +185,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     std::cout << "NPU itself Elapsed" << tmp << " micro sec\n";
     #endif
 
-    #ifndef __USE_NPU
+    //#ifndef __USE_NPU
     for(int i=0;i<numGaussians;i++){
         Gaussian3D &g = group.gaussians[i];
         // transform to view space
@@ -201,13 +194,17 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         Eigen::Vector4f pos_view = cam.full_proj * pos_vec;
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
-        g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
+        //g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
+        Eigen::Vector4f sample = (cam.world_to_view * pos_vec);
+        for(int k = 0;k<3;k++){
+            deviation.push_back(sample(k) / g.xyz_view[k]);
+        }
 
-        g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
-        g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
+        //g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
+        //g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
         
     }
-    #endif
+    //#endif
 
     // put Gaussian into tiles
     std::vector<Tile> tiles;
@@ -227,7 +224,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
             continue;
         }
 
-        // #ifndef __USE_NPU
+        #ifndef __USE_NPU
         Eigen::Matrix3f R;
         // convert quaternion to rotation matrix
         Eigen::Vector<float, 4> Rot;
@@ -273,7 +270,6 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         float det = det_cov_plus_h_cov;
         float det_inv = 1.f / det;
         // we use this afterwards
-        g.inv_cov_2d_sample = g.inv_cov_2d;
         g.inv_cov_2d << covariance2D(1,1) * det_inv, -covariance2D(1,0) * det_inv,
                         -covariance2D(1,0) * det_inv, covariance2D(0,0) * det_inv;
 
@@ -284,7 +280,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
 	    float lambda1 = b + std::sqrt(std::max(0.1f, b * b - det));
 	    //float lambda2 = b - std::sqrt(std::max(0.1f, b * b - det));
         g.radius = std::ceil(3.f * std::sqrt(lambda1));
-        // #endif
+        #endif
         // get related tiles
         std::array<float, 2> rect_min;
         std::array<float, 2> rect_max;
@@ -388,11 +384,10 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                         diff[1] = pixel_y + 0.5f - g.screen_coord[1];
                        
                         float exponent = -0.5f * diff.transpose() * g.inv_cov_2d * diff;
-                        float test = -0.5f * diff.transpose() * g.inv_cov_2d_sample * diff;
-                        if(test > 0.f || std::isnan(test)){
+                        if(exponent > 0.f || std::isnan(exponent)){
                             continue;
                         }
-                        float weight = std::exp(test); // prevent overflow
+                        float weight = std::exp(exponent); // prevent overflow
                         float alpha = std::min(0.99f, g.opacity * weight);
                         
             			if (alpha < 1.0f / 255.0f)
@@ -429,15 +424,10 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
     image.convertTo(display, CV_8UC3, 255.0);
     cv::imwrite(img_name, display);
 
-    delete[] group.xyz_buf;
-    group.xyz_buf = nullptr;
-
 }
 
 
 int main(int argc, const char *argv[]){
-
-
 
     Eigen::Matrix4f baseMat_W2C;
     baseMat_W2C << -0.9250140190124512f, -0.2748899757862091f, 0.2622683644294739f, -1.0572376251220703f,
@@ -447,8 +437,44 @@ int main(int argc, const char *argv[]){
 
     setup_npu(argc, argv);
 
+    std::string path = "chair";
 
-    render("point_cloud.ply", baseMat_W2C , "output.png");
+
+    
+    // load gaussians from file
+    std::string ply_name = path + "/point_cloud.ply";
+    
+    GaussianGroup group;
+    loadGaussiansFromFile(ply_name, group);
+
+    
+
+    // initialize camera
+    std::vector<Eigen::Matrix4f> rotations;
+    load_from_file(path, rotations);
+
+
+    #ifdef __USE_NPU
+    path = path + "/npu";
+    #else
+    path = path + "/cpu";
+    #endif
+
+    for(int i=0;i<rotations.size();i++){
+        Camera cam;
+        load_camera(cam, rotations[i]);
+        render(group, cam , path + "/output" + std::to_string(i) + ".png");
+    }
+
+
+    {
+        std::ofstream ofs("data.csv");
+        if (ofs) {
+            for (const auto &v : deviation) {
+                ofs << v << ',';
+            }
+        }
+    }
 
 
 }

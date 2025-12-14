@@ -4,6 +4,14 @@
 #include "base.hpp"
 
 #include <Eigen/Dense>
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 
 
 void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C){
@@ -49,4 +57,51 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C){
     #endif
     
     cam.pos = cam.world_to_view.transpose().inverse().block<1,3>(3,0);
+}
+
+
+
+void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations) {
+    // open json file
+    std::ifstream ifs(path + "/transforms_train.json");
+    if (!ifs.is_open()) {
+        std::cerr << "cannot open file\n";
+        return;
+    }
+
+    json j;
+    ifs >> j;
+
+    // get frames
+    const auto& frames = j.at("frames");
+
+    // save rotation matrices of all frames
+    
+    rotations.reserve(frames.size());
+
+    for (const auto& frame : frames) {
+        const auto& tm = frame.at("transform_matrix");
+
+        Eigen::Matrix4f R;
+
+        // pick up and put in
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                if(c==1 || c == 2){
+
+                    R(r, c) = -1 * tm[r][c].get<float>();
+                }else{
+
+                    R(r, c) = tm[r][c].get<float>();
+                }
+                
+            }
+        }
+
+        rotations.push_back(R);
+    }
+
+    
+
+    return;
 }

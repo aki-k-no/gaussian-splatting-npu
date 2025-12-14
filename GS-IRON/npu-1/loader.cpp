@@ -7,9 +7,7 @@
 #include <sstream>
 #include <cstdint>
 
-GaussianGroup loadGaussiansFromFile(const std::string &filename) {
-    // Gaussians
-    GaussianGroup group;
+void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
 
     // open file
     std::ifstream file(filename, std::ios::binary);
@@ -60,8 +58,8 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
             }
     }
 
-    group.xyz_buf = new std::bfloat16_t[((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE * 15];
-    memset(group.xyz_buf, 0, (((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 15) * sizeof(std::bfloat16_t));
+    group.xyz_buf.resize(((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE * 15);
+    memset(group.xyz_buf.data(), 0, (((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 15) * sizeof(std::bfloat16_t));
     int size = ((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 15;
 
     // Read Gaussian data
@@ -189,7 +187,5 @@ GaussianGroup loadGaussiansFromFile(const std::string &filename) {
         group.gaussians.push_back(gaussian);
     }
     
-
-    return group;
 }
 
