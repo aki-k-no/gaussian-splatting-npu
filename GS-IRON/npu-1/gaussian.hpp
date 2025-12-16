@@ -17,6 +17,7 @@ struct Gaussian3D {
     std::array<float, 3> f_dc;     // DC 
     std::array<float, 45> f_rest;  // Rest DC
     Eigen::Vector3f xyz_view;      // xyz in view space
+    Eigen::Vector3f xyz_view_cpu;  // xyz in view space (for analysis)
     std::array<float, 2> screen_coord; // screen coordinates
     Eigen::Vector3f color;         // RGB color
     Eigen::Matrix2f inv_cov_2d;    // Inverse of 2D covariance matrix

@@ -54,6 +54,13 @@ DATATYPE_OUT *bufOut;
 
 unsigned int opcode = 3;
 
+std::vector<float> deviation1;
+std::vector<float> deviation2;
+std::vector<float> deviation3;
+std::vector<float> deviation4;
+std::vector<float> deviation5;
+std::vector<float> deviation6;
+
 void setup_npu(int argc, const char *argv[]){
 
     
@@ -195,7 +202,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     std::cout << "NPU itself Elapsed" << tmp << " micro sec\n";
     #endif
 
-    #ifndef __USE_NPU
+    //#ifndef __USE_NPU
     for(int i=0;i<numGaussians;i++){
         Gaussian3D &g = group.gaussians[i];
         // transform to view space
@@ -204,12 +211,17 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         Eigen::Vector4f pos_view = cam.full_proj * pos_vec;
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
-        g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
+        g.xyz_view_cpu = (cam.world_to_view * pos_vec).head<3>();
+        
+        // #ifndef __USE_NPU
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
         
+        // g.xyz_view = g.xyz_view_cpu;
+        // #endif
     }
-    #endif
+    //#endif
+    
 
     // put Gaussian into tiles
     std::vector<Tile> tiles;
@@ -229,7 +241,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             continue;
         }
 
-        #ifndef __USE_NPU
+        // #ifndef __USE_NPU
         Eigen::Matrix3f R;
         // convert quaternion to rotation matrix
         Eigen::Vector<float, 4> Rot;
@@ -250,16 +262,31 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
 
         Eigen::Matrix3f M;
         M = R * S;
-        g.covariance3D = M * M.transpose();
+        Eigen::Matrix3f cov3D_cpu = M * M.transpose();
+        deviation1.push_back(g.covariance3D(0,0) / cov3D_cpu(0,0));
+        deviation2.push_back(g.covariance3D(0,1) / cov3D_cpu(0,1));
+        deviation3.push_back(g.covariance3D(0,2) / cov3D_cpu(0,2));
+        deviation4.push_back(g.covariance3D(1,1) / cov3D_cpu(1,1));
+        deviation5.push_back(g.covariance3D(1,2) / cov3D_cpu(1,2));
+        deviation6.push_back(g.covariance3D(2,2) / cov3D_cpu(2,2));
+        #ifndef __USE_NPU
+        g.covariance3D = cov3D_cpu;
+        #endif
 
         // project to 2D covariance
-        float _z = g.xyz_view[2];
+        float _z = g.xyz_view_cpu[2];
+        float _x = g.xyz_view_cpu[0];
+        float _y = g.xyz_view_cpu[1];
         Eigen::Matrix<float, 3, 3> J;
-        J << cam.fx / _z, 0.0f, -cam.fx * g.xyz_view[0] / (_z * _z),
-             0.0f, cam.fy / _z, -cam.fy * g.xyz_view[1] / (_z * _z),
+
+        J << cam.fx / _z, 0.0f, -cam.fx * _x / (_z * _z),
+             0.0f, cam.fy / _z, -cam.fy * _y / (_z * _z),
              0.f, 0.f, 0.f;
-        g.J_R = J * cam.world_to_view.block<3,3>(0,0);
+        Eigen::Matrix3f J_R_cpu = J * cam.world_to_view.block<3,3>(0,0);
+        #ifndef __USE_NPU
+        g.J_R = J_R_cpu;
         #endif
+        // #endif
         
         
 
@@ -306,7 +333,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         Eigen::Vector3f colors;
         colors << 0.5f, 0.5f, 0.5f;
         // compute colors based on coefficients
-        Eigen::Vector3f dif = cam.pos - g.xyz;
+        Eigen::Vector3f dif = g.xyz - cam.pos;
         dif = dif / dif.norm();
         //implementation here is referenced from forward.cu from https://github.com/graphdeco-inria/gaussian-splatting 
   		float x = dif[0];
@@ -337,6 +364,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             colors[i] = std::max(0.0f, colors[i]);
         }
         g.color = colors;
+        
 
     }
     
@@ -387,8 +415,8 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                         // compute contribution to pixel
                         Eigen::Vector2f diff;
                         //difference to the center of gaussian
-                        diff[0] = pixel_x + 0.5f - g.screen_coord[0];
-                        diff[1] = pixel_y + 0.5f - g.screen_coord[1];
+                        diff[0] = pixel_x - g.screen_coord[0];
+                        diff[1] = pixel_y - g.screen_coord[1];
                        
                         float exponent = -0.5f * diff.transpose() * g.inv_cov_2d * diff;
                         if(exponent > 0.f){
@@ -407,6 +435,10 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                             break; 
                         }
                     }
+                    // bg color
+                    pixel_color[0] = pixel_color[0] + pixel_opacity * 1.f;
+                    pixel_color[1] = pixel_color[1] + pixel_opacity * 1.f;
+                    pixel_color[2] = pixel_color[2] + pixel_opacity * 1.f;
                     //clamp color
                     pixel_color[0] = std::min(1.0f, pixel_color[0]);
                     pixel_color[1] = std::min(1.0f, pixel_color[1]);
@@ -437,16 +469,10 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
 
 int main(int argc, const char *argv[]){
 
-
-    Eigen::Matrix4f baseMat_W2C;
-    baseMat_W2C << -0.9250140190124512f, -0.2748899757862091f, 0.2622683644294739f, -1.0572376251220703f,
-    -0.37993317842483526f, 0.6692678928375244f, -0.6385383605957031f, 2.5740303993225098f,
-    -0.0f, -0.6903012990951539f, -0.7235219478607177f, 2.9166102409362793f,
-    0.f, 0.f, 0.f, 1.f;
-
     setup_npu(argc, argv);
 
-    std::string path = "chair";
+    std::string name = "chair";
+    std::string path = "data/" + name;
 
 
     
@@ -460,7 +486,8 @@ int main(int argc, const char *argv[]){
 
     // initialize camera
     std::vector<Eigen::Matrix4f> rotations;
-    load_from_file(path, rotations);
+    float fovX;
+    load_from_file(path, rotations, fovX);
 
 
     #ifdef __USE_NPU
@@ -469,21 +496,43 @@ int main(int argc, const char *argv[]){
     path = path + "/cpu";
     #endif
 
-    for(int i=0;i<rotations.size();i++){
+    for(unsigned int i=0;i < rotations.size();i++){
         Camera cam;
-        load_camera(cam, rotations[i]);
+        load_camera(cam, rotations[i], fovX);
         render(group, cam , path + "/output" + std::to_string(i) + ".png");
     }
 
 
-    // {
-    //     std::ofstream ofs("data.csv");
-    //     if (ofs) {
-    //         for (const auto &v : deviation) {
-    //             ofs << v << ',';
-    //         }
-    //     }
-    // }
+    for(int i=0;i<6;i++){
+        
+        std::ofstream ofs("csv/cov3_diff_data_" + name + "_" + std::to_string(i) + ".csv");
+        if (ofs) {
+            std::vector<float> deviation;
+            switch(i){
+                case 0:
+                deviation = deviation1;
+                break;
+                case 1:
+                deviation = deviation2;
+                break;
+                case 2:
+                deviation = deviation3;
+                break;
+                case 3:
+                deviation = deviation4;
+                break;
+                case 4:
+                deviation = deviation5;
+                break;
+                case 5:
+                deviation = deviation6;
+                break;
+            }
+            for (const auto &v : deviation) {
+               ofs << v << ',';
+            }
+        }
+    }
 
 
 }
