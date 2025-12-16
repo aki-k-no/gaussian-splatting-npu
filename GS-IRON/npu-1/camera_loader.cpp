@@ -4,17 +4,15 @@
 #include "base.hpp"
 
 #include <Eigen/Dense>
-#include <iostream>
 #include <fstream>
 #include <vector>
 #include <string>
+#include <cmath>
 
 #include <nlohmann/json.hpp>
-
 using json = nlohmann::json;
 
-
-void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C){
+void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C, float fovX){
 
 
     Eigen::Matrix4f baseMat_C2W;
@@ -22,12 +20,16 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C){
 
     cam.R = baseMat_C2W.block<3,3>(0,0);
     cam.T << baseMat_C2W(0,3), baseMat_C2W(1,3), baseMat_C2W(2,3);
-    cam.fx = 1111.1f;
-    cam.fy = 1111.1f;
-    cam.cx = 400.0f;
-    cam.cy = 400.0f;
     cam.width = 800;
     cam.height = 800;
+    cam.fovX = fovX;
+    cam.fx = cam.width / (2 * tan(fovX / 2));
+    cam.fovY = 2 * atan(cam.height/(2*cam.fx));
+    cam.fy = cam.height / (2 * tan(cam.fovY / 2));
+    cam.cx = 400.0f;
+    cam.cy = 400.0f;
+    cam.tan_fovX = tan(cam.fovX / 2);
+    cam.tan_fovY = tan(cam.fovY / 2);
 
 
     // preprocess step
@@ -59,9 +61,7 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C){
     cam.pos = cam.world_to_view.transpose().inverse().block<1,3>(3,0);
 }
 
-
-
-void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations) {
+void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations, float &fovX) {
     // open json file
     std::ifstream ifs(path + "/transforms_train.json");
     if (!ifs.is_open()) {
@@ -74,6 +74,8 @@ void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations) {
 
     // get frames
     const auto& frames = j.at("frames");
+
+    fovX = j.at("camera_angle_x").get<float>();
 
     // save rotation matrices of all frames
     
@@ -100,8 +102,6 @@ void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations) {
 
         rotations.push_back(R);
     }
-
-    
 
     return;
 }

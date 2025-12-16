@@ -14,6 +14,10 @@ struct Camera {
     float cy;       // Principal point y
     int width;      // Image width
     int height;     // Image height
+    float fovX;
+    float fovY;
+    float tan_fovX;
+    float tan_fovY;
 };
 
 #endif // CAMERA_H

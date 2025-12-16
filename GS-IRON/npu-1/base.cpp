@@ -56,9 +56,14 @@ DATATYPE_OUT *bufOut;
 
 unsigned int opcode = 3;
 
-
 std::vector<float> deviation;
 
+std::vector<float> deviation1;
+std::vector<float> deviation2;
+std::vector<float> deviation3;
+std::vector<float> deviation4;
+std::vector<float> deviation5;
+std::vector<float> deviation6;
 void setup_npu(int argc, const char *argv[]){
 
     
@@ -200,8 +205,8 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             deviation.push_back(sample(k) / g.xyz_view[k]);
         }
 
-        //g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
-        //g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
+        g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
+        g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
         
     }
     //#endif
@@ -299,7 +304,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         Eigen::Vector3f colors;
         colors << 0.5f, 0.5f, 0.5f;
         // compute colors based on coefficients
-        Eigen::Vector3f dif = cam.pos - g.xyz;
+        Eigen::Vector3f dif = g.xyz - cam.pos;
         dif = dif / dif.norm();
         //implementation here is referenced from forward.cu from https://github.com/graphdeco-inria/gaussian-splatting 
   		float x = dif[0];
@@ -429,15 +434,10 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
 
 int main(int argc, const char *argv[]){
 
-    Eigen::Matrix4f baseMat_W2C;
-    baseMat_W2C << -0.9250140190124512f, -0.2748899757862091f, 0.2622683644294739f, -1.0572376251220703f,
-    -0.37993317842483526f, 0.6692678928375244f, -0.6385383605957031f, 2.5740303993225098f,
-    -0.0f, -0.6903012990951539f, -0.7235219478607177f, 2.9166102409362793f,
-    0.f, 0.f, 0.f, 1.f;
-
     setup_npu(argc, argv);
 
-    std::string path = "chair";
+    std::string name = "chair";
+    std::string path = "data/" + name;
 
 
     
@@ -451,7 +451,8 @@ int main(int argc, const char *argv[]){
 
     // initialize camera
     std::vector<Eigen::Matrix4f> rotations;
-    load_from_file(path, rotations);
+    float fovX;
+    load_from_file(path, rotations, fovX);
 
 
     #ifdef __USE_NPU
@@ -460,18 +461,40 @@ int main(int argc, const char *argv[]){
     path = path + "/cpu";
     #endif
 
-    for(int i=0;i<rotations.size();i++){
+    for(unsigned int i=0;i < rotations.size();i++){
         Camera cam;
-        load_camera(cam, rotations[i]);
+        load_camera(cam, rotations[i], fovX);
         render(group, cam , path + "/output" + std::to_string(i) + ".png");
     }
 
 
-    {
-        std::ofstream ofs("data.csv");
+    for(int i=0;i<4;i++){
+        
+        std::ofstream ofs("csv/jacobian/cov3_diff_data_" + name + "_" + std::to_string(i) + ".csv");
         if (ofs) {
+            std::vector<float> deviation;
+            switch(i){
+                case 0:
+                deviation = deviation1;
+                break;
+                case 1:
+                deviation = deviation2;
+                break;
+                case 2:
+                deviation = deviation3;
+                break;
+                case 3:
+                deviation = deviation4;
+                break;
+                case 4:
+                deviation = deviation5;
+                break;
+                case 5:
+                deviation = deviation6;
+                break;
+            }
             for (const auto &v : deviation) {
-                ofs << v << ',';
+               ofs << v << ',';
             }
         }
     }
