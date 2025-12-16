@@ -217,7 +217,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
         
-        // g.xyz_view = g.xyz_view_cpu;
+        g.xyz_view = g.xyz_view_cpu;
         // #endif
     }
     //#endif
@@ -241,7 +241,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             continue;
         }
 
-        // #ifndef __USE_NPU
+        //#ifndef __USE_NPU
         Eigen::Matrix3f R;
         // convert quaternion to rotation matrix
         Eigen::Vector<float, 4> Rot;
@@ -263,16 +263,8 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         Eigen::Matrix3f M;
         M = R * S;
         Eigen::Matrix3f cov3D_cpu = M * M.transpose();
-        deviation1.push_back(g.covariance3D(0,0) / cov3D_cpu(0,0));
-        deviation2.push_back(g.covariance3D(0,1) / cov3D_cpu(0,1));
-        deviation3.push_back(g.covariance3D(0,2) / cov3D_cpu(0,2));
-        deviation4.push_back(g.covariance3D(1,1) / cov3D_cpu(1,1));
-        deviation5.push_back(g.covariance3D(1,2) / cov3D_cpu(1,2));
-        deviation6.push_back(g.covariance3D(2,2) / cov3D_cpu(2,2));
-        #ifndef __USE_NPU
         g.covariance3D = cov3D_cpu;
-        #endif
-
+        
         // project to 2D covariance
         float _z = g.xyz_view_cpu[2];
         float _x = g.xyz_view_cpu[0];
@@ -283,10 +275,14 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
              0.0f, cam.fy / _z, -cam.fy * _y / (_z * _z),
              0.f, 0.f, 0.f;
         Eigen::Matrix3f J_R_cpu = J * cam.world_to_view.block<3,3>(0,0);
-        #ifndef __USE_NPU
+
+
+        deviation1.push_back(g.J_R(0,0) /J_R_cpu(0,0));
+        deviation2.push_back(g.J_R(0,2) / J_R_cpu(0,2));
+        deviation3.push_back(g.J_R(1,1) / J_R_cpu(1,1));
+        deviation4.push_back(g.J_R(1,2) / J_R_cpu(1,2));
         g.J_R = J_R_cpu;
-        #endif
-        // #endif
+        //#endif
         
         
 
@@ -503,9 +499,9 @@ int main(int argc, const char *argv[]){
     }
 
 
-    for(int i=0;i<6;i++){
+    for(int i=0;i<4;i++){
         
-        std::ofstream ofs("csv/cov3_diff_data_" + name + "_" + std::to_string(i) + ".csv");
+        std::ofstream ofs("csv/jacobian/cov3_diff_data_" + name + "_" + std::to_string(i) + ".csv");
         if (ofs) {
             std::vector<float> deviation;
             switch(i){

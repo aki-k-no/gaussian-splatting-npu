@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # CSV 読み込み
-for i in range(6):
-    filename = f"csv/cov3_diff_data_chair_{i}.csv"
+for i in range(4):
+    filename = f"csv/jacobian/cov3_diff_data_chair_{i}.csv"
     data = []
 
     with open(filename, newline='') as csvfile:
@@ -43,8 +43,8 @@ for i in range(6):
 
 
 
-    vmin = 0.92
-    vmax = 1.08
+    vmin = 0.97
+    vmax = 1.03
 
     plt.figure(figsize=(10,6))
     plt.hist(data, bins=50, range=(vmin, vmax), color='skyblue', edgecolor='black')
@@ -52,4 +52,4 @@ for i in range(6):
     plt.xlabel("Value")
     plt.ylabel("Count")
     plt.grid(True, linestyle='--', alpha=0.5)
-    plt.savefig(f"csv/histogram_chair_{i}.png")
+    plt.savefig(f"csv/jacobian/histogram_chair_{i}.png")
