@@ -59,7 +59,8 @@ def precomp(dev):
         gaussian_back2_ty = np.ndarray[(2 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         conv3D_return_ty = np.ndarray[(8 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         conv3D_return_ty_accum = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
-        cov2D_return_ty = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        cov2D_return_ty = np.ndarray[(4 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        cov2D_return_accum_ty = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         
         return1_ty = np.ndarray[(6 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
@@ -88,9 +89,9 @@ def precomp(dev):
             "f32_get_J_R", inputs=[w2v_ty, gaussian_back1_ty, to_cov2D_ty]
         )
 
-        conv2D_func = external_func(
-            "f32_get_conv2D", inputs=[to_cov2D_ty, conv3D_return_ty_accum, cov2D_return_ty]
-        )
+        conv2D_funcs = [ external_func(
+            "f32_get_conv2D_" + str(i), inputs=[to_cov2D_ty, conv3D_return_ty, cov2D_return_ty]
+        ) for i in range(conv3D_num)]
 
         # Tile declarations
         ShimTile0 = tile(0, 0)
@@ -101,7 +102,7 @@ def precomp(dev):
         ComputeTileCamera = tile(0, 3)
         ComputeTileJR = tile(0, 4)
         ComputeTileConv3Ds = [tile(1, 2), tile(1,3), tile(1, 4), tile(1,5)]
-        ComputeTileConv2D = tile(0,5)
+        ComputeTileConv2Ds = [tile(2, 2), tile(2, 3), tile(2, 4), tile(2, 5)]
 
         # AIE-array data movement with object fifos
         of_essentials = object_fifo("essentials", ShimTile0, MemTile0, 2, essentials_ty)
@@ -132,17 +133,13 @@ def precomp(dev):
         fifo_back1_offset_list = [0, 4*line_size // sub_tiles]
         object_fifo_link(fifo_back1_link_list, of_out1_unit, fifo_back1_offset_list, [])
 
-        of_JR_cov2D = object_fifo("to_cov2D", ComputeTileJR, ComputeTileConv2D, 2, to_cov2D_ty)
+        of_JR_cov2Ds = object_fifo("to_cov2D", ComputeTileJR, ComputeTileConv2Ds, 2, to_cov2D_ty)
     
-        of_conv3D_unit = object_fifo("conv3D_unit",  MemTile1, ComputeTileConv2D, 2, conv3D_return_ty_accum)
-        of_to_cov2D = [object_fifo("cov3Dto2D" + str(i), ComputeTileConv3Ds[i], MemTile1, 2, conv3D_return_ty) for i in range(conv3D_num)]
-        fifo_to_cov2D_link_list = of_to_cov2D
-        fifo_to_cov2D_offset_list = [(8*line_size // sub_tiles) // conv3D_num * i for i in range(conv3D_num)]
-        object_fifo_link(fifo_to_cov2D_link_list, of_conv3D_unit, fifo_to_cov2D_offset_list, [])
+        of_to_cov2Ds = [object_fifo("cov3Dto2D_" + str(i), ComputeTileConv3Ds[i], ComputeTileConv2Ds[i], 2, conv3D_return_ty) for i in range(conv3D_num)]
         
-        of_out2_unit = object_fifo("out2_unit",  MemTile1, ShimTile1, 2, cov2D_return_ty)
-        of_cov2D_return = object_fifo("cov2D_return", ComputeTileConv2D, MemTile1, 2, cov2D_return_ty)
-        object_fifo_link(of_cov2D_return, of_out2_unit, [], [])
+        of_out2_unit = object_fifo("out2_unit",  MemTile1, ShimTile1, 2, cov2D_return_accum_ty)
+        of_cov2D_returns = [object_fifo("cov2D_return_" + str(i), ComputeTileConv2Ds[i], MemTile1, 2, cov2D_return_ty) for i in range(conv3D_num)]
+        object_fifo_link(of_cov2D_returns, of_out2_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
 
 
 
@@ -179,11 +176,11 @@ def precomp(dev):
             for _ in range_(0xFFFFFFFF):
                 elemIn1 = of_w2v.acquire(ObjectFifoPort.Consume, 1)
                 for _ in range_(sub_tiles):
-                    elemOut = of_JR_cov2D.acquire(ObjectFifoPort.Produce, 1)
+                    elemOut = of_JR_cov2Ds.acquire(ObjectFifoPort.Produce, 1)
                     elemIn2 = of_out1.acquire(ObjectFifoPort.Consume, 1)
                     getJ_R_func(elemIn1, elemIn2, elemOut)
                     of_out1.release(ObjectFifoPort.Consume, 1)
-                    of_JR_cov2D.release(ObjectFifoPort.Produce,1)
+                    of_JR_cov2Ds.release(ObjectFifoPort.Produce,1)
                 of_w2v.release(ObjectFifoPort.Consume, 1)
                 
 
@@ -195,25 +192,26 @@ def precomp(dev):
                 for _ in range_(0xFFFFFFFF):
                     for _ in range_(sub_tiles):
                         elemIn1 = of_rot_and_scales[i].acquire(ObjectFifoPort.Consume, 1)
-                        elemOut = of_to_cov2D[i].acquire(ObjectFifoPort.Produce, 1)
+                        elemOut = of_to_cov2Ds[i].acquire(ObjectFifoPort.Produce, 1)
                         conv3D_func(elemIn1, elemOut)
-                        of_to_cov2D[i].release(ObjectFifoPort.Produce,1)
+                        of_to_cov2Ds[i].release(ObjectFifoPort.Produce,1)
                         of_rot_and_scales[i].release(ObjectFifoPort.Consume, 1)
 
-        # Compute conv2D tile        
-        @core(ComputeTileConv2D, "precomp.a")
-        def core_body_cov2D():
-            for _ in range_(0xFFFFFFFF):
-                for _ in range_(sub_tiles):
-                    elemIn1 = of_JR_cov2D.acquire(ObjectFifoPort.Consume, 1)
-                    elemOut = of_cov2D_return.acquire(ObjectFifoPort.Produce, 1)
-                    elemIn2 = of_conv3D_unit.acquire(ObjectFifoPort.Consume, 1)
-                    conv2D_func(elemIn1, elemIn2, elemOut)
-                    of_conv3D_unit.release(ObjectFifoPort.Consume, 1)
-                    of_cov2D_return.release(ObjectFifoPort.Produce,1)
-                    of_JR_cov2D.release(ObjectFifoPort.Consume, 1)
+        # Compute conv2D tile
+        for i in range(conv3D_num):
+            @core(ComputeTileConv2Ds[i], "precomp.a")
+            def core_body_cov2D():
+                for _ in range_(0xFFFFFFFF):
+                    for _ in range_(sub_tiles):
+                        elemIn1 = of_JR_cov2Ds.acquire(ObjectFifoPort.Consume, 1)
+                        elemOut = of_cov2D_returns[i].acquire(ObjectFifoPort.Produce, 1)
+                        elemIn2 = of_to_cov2Ds[i].acquire(ObjectFifoPort.Consume, 1)
+                        conv2D_funcs[i](elemIn1, elemIn2, elemOut)
+                        of_to_cov2Ds[i].release(ObjectFifoPort.Consume, 1)
+                        of_cov2D_returns[i].release(ObjectFifoPort.Produce,1)
+                        of_JR_cov2Ds.release(ObjectFifoPort.Consume, 1)
 
-        tiles_to_trace = [ComputeTileConv2D, ComputeTileCamera, ShimTile0]
+        tiles_to_trace = [ComputeTileCamera, ShimTile0]
         if trace_size > 0:
             trace_utils.configure_packet_tracing_flow(tiles_to_trace, ShimTile0)
 

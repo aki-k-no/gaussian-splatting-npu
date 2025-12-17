@@ -8,3 +8,6 @@ tensorboard_3d
 screenshots
 nerf_synthetic/*
 *.csv
+point_cloud.ply
+*.json
+GS-IRON/npu-1/data/*

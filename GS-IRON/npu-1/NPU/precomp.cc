@@ -430,11 +430,12 @@ void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict out
 }
 
 //cov2D computation
-template <const int GAUSSIAN_SIZE>
+template <const int GAUSSIAN_SIZE, const int index>
 void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
     
+    JR = JR + index * GAUSSIAN_SIZE / 4 * 8;
     event1();
-    for(size_t i = 0; i < GAUSSIAN_SIZE / 16; i++){
+    for(size_t i = 0; i < GAUSSIAN_SIZE / 64; i++){
         
         aie::vector<bf16, 16> vec_cov2D_0_0 = aie::zeros<bf16,16>();
         aie::vector<bf16, 16> vec_cov2D_0_1 = aie::zeros<bf16,16>();
@@ -501,15 +502,22 @@ void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
             vec_cov2D_1_1[j] = aie::reduce_add(cov2D_accum);
 
         }
-        vec_cov2D_0_0 = aie::add(vec_cov2D_0_0, bf16(0.3));
-        vec_cov2D_1_1 = aie::add(vec_cov2D_1_1, bf16(0.3));
         aie::vector<bf16, 16> vec_cov2D_0_1_minus = aie::mul(vec_cov2D_0_1, bf16(-1));
 
         // compute det
         aie::accum<accfloat, 16> det_accum = aie::mul(vec_cov2D_0_0, vec_cov2D_1_1);
+        //aie::vector<bf16, 16> det_min = aie::mul(aie::mul(det_accum.to_vector<bf16>(), bf16(0.0625)).to_vector<bf16>(), bf16(0.0625));
         det_accum = aie::mac(det_accum, vec_cov2D_0_1, vec_cov2D_0_1_minus);
-        
         aie::vector<bf16, 16> det_vec = det_accum.to_vector<bf16>();
+        //aie::mask<16> det_is_zero = aie::eq(det_vec, bf16(0));
+        //det_vec = aie::select(det_vec, det_min, det_is_zero);
+        
+        det_vec = aie::add(det_vec, aie::mul(vec_cov2D_0_0, bf16(0.3)).to_vector<bf16>());
+        det_vec = aie::add(det_vec, aie::mul(vec_cov2D_1_1, bf16(0.3)).to_vector<bf16>());
+        det_vec = aie::add(det_vec, bf16(0.09));
+        vec_cov2D_0_0 = aie::add(vec_cov2D_0_0, bf16(0.3));
+        vec_cov2D_1_1 = aie::add(vec_cov2D_1_1, bf16(0.3));
+        
         aie::vector<bf16, 16> inv_det_vec = aie::div(aie::broadcast<bf16,16>(bf16(1.0)), det_vec);
 
         // compute inverse
@@ -533,6 +541,22 @@ void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
     return;
 }
 
+template<const int GAUSSIAN_SIZE>
+void get_color(bf16 *restrict data, bf16 * restrict gaussians_data, bf16 * restrict output){
+    aie::vector<bf16, 16> SH_coeff = aie::load_v<16>(data);
+    aie::vector<bf16, 8> camera_data = aie::load_v<8>(data + 16);
+    
+    for(size_t i = 0;i<GAUSSIAN_SIZE;i++){
+        aie::vector<bf16, 8> gaussian_xyz = aie::load_v<8>(gaussians_data);
+        gaussians_data += 8;
+        aie::vector<bf16, 8> diff_vec = aie::sub(gaussian_xyz, camera_data);
+        aie::vector<bf16, 8> diff_powered = aie::mul(diff_vec, diff_vec);
+        bf16 sum = diff_powered[0] + diff_powered[1]+ diff_powered[2];
+        diff_vec = aie::div(diff_vec, sum);
+    }
+
+}
+
 extern "C" {
 
 void f32_proj_to_view_space(bf16 *proj_in, bf16 *gaussian_in, bf16 *out) { proj_to_view_space<TILE_SIZE>(proj_in, gaussian_in, out); }
@@ -543,5 +567,8 @@ void f32_get_conv3D(bf16 *rot_in, bf16 *out) { get_conv3D<TILE_SIZE / CONV3D_TIL
 
 void f32_get_J_R(bf16 *params_in, bf16 *pos_in, bf16 *out) { get_J_R<TILE_SIZE>(params_in, pos_in, out); }
 
-void f32_get_conv2D(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_SIZE>(JR_in, cov3D_in, out); }
+void f32_get_conv2D_0(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_SIZE, 0>(JR_in, cov3D_in, out); }
+void f32_get_conv2D_1(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_SIZE, 1>(JR_in, cov3D_in, out); }
+void f32_get_conv2D_2(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_SIZE, 2>(JR_in, cov3D_in, out); }
+void f32_get_conv2D_3(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_SIZE, 3>(JR_in, cov3D_in, out); }
 } // extern "C"

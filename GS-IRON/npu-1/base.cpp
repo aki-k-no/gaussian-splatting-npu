@@ -228,7 +228,6 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         if(g.xyz_view[2] < 0.2f){
             continue;
         }
-
         #ifndef __USE_NPU
         Eigen::Matrix3f R;
         // convert quaternion to rotation matrix
@@ -286,6 +285,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
 	    //float lambda2 = b - std::sqrt(std::max(0.1f, b * b - det));
         g.radius = std::ceil(3.f * std::sqrt(lambda1));
         #endif
+        
         // get related tiles
         std::array<float, 2> rect_min;
         std::array<float, 2> rect_max;
@@ -389,7 +389,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                         diff[1] = pixel_y + 0.5f - g.screen_coord[1];
                        
                         float exponent = -0.5f * diff.transpose() * g.inv_cov_2d * diff;
-                        if(exponent > 0.f || std::isnan(exponent)){
+                        if(exponent > 0.f){ // || std::isnan(exponent)){
                             continue;
                         }
                         float weight = std::exp(exponent); // prevent overflow

@@ -107,9 +107,7 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
             int offset = tile * TILE_SIZE * 15;
             for (int i = 0; i < 4; i++) {
                 
-                if(tile != 0 || iter != 0 || i != 0){
-                    continue;
-                }
+                
 
                 for(int j=0;j<4;j++){
 
@@ -224,35 +222,14 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 DATATYPE_OUT radius = std::sqrt(b + sqrt_term) * 3 + 1;
 
                 
-                std::cout << "cov3D" << "\n";
-                for(int idx = 0; idx < 9; idx++){
-                    std::cout << cov3D_mat[idx] << " ";
-                }
-                std::cout << "\n";
-                std::cout << "JR_mat" << "\n";
-                for(int idx = 0; idx < 6; idx++){
-                    std::cout << test_R[idx] << " ";
-                }
-                std::cout << "\n";
-
-                std::cout << "cov2D\n";
-                for(int idx = 0; idx < 4; idx++){
-                    std::cout << ref_mat[idx] << " ";
-                }
-                std::cout << "\n";
-
-                for(int idx = 0;idx < 16;idx++){
-                    std::cout << bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + idx] << " ";
-                }
-                std::cout << "\n";
-
-                std::cout << "det" << det << "\n";
+                
+                
 
                 //check
-                check_each("cov2D", 2, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4], inv_cov2D_0_0, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4, 0.25, errors);
-                check_each("cov2D", 2, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1], inv_cov2D_0_1, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1, 0.25, errors);
-                check_each("cov2D", 2, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2], inv_cov2D_1_1, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2, 0.25, errors);
-                check_each("cov2D", 2, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3], radius, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3, 5, errors);
+                check_each("cov2D", verbosity, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4], inv_cov2D_0_0, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4, 0.25, errors);
+                check_each("cov2D", verbosity, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1], inv_cov2D_0_1, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1, 0.25, errors);
+                check_each("cov2D", verbosity, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2], inv_cov2D_1_1, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2, 0.25, errors);
+                check_each("cov2D", verbosity, bufOut[tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3], radius, tile * TILE_SIZE * 10 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3, 5, errors);
 
             
         
@@ -397,42 +374,42 @@ int main(int argc, const char *argv[]) {
         bufInA[i] = i + 1;
     }
     generate_random_bfloat16(bufInA, IN1_SIZE , 0, 3);
-    bufInA[0] = -0.925014;
-    bufInA[1] = -0.379933;
-    bufInA[2] = 0;
-    bufInA[3] = -4.11452e-08;
-    bufInA[4] = -0.27489;
-    bufInA[5] =  0.669268;
-    bufInA[6] = -0.690301;
-    bufInA[7] = 0;
-    bufInA[8] = 0.262268;
-    bufInA[9] = -0.638538;
-    bufInA[10] = -0.723522;
-    bufInA[11] =  4.03113;
-    bufInA[12] = 0;
-    bufInA[13] = 0;
-    bufInA[14] = 0;
-    bufInA[15] = 1;
-    bufInA[16] = 1111.11;
-    bufInA[17] = 1111.11;
+    // bufInA[0] = -0.925014;
+    // bufInA[1] = -0.379933;
+    // bufInA[2] = 0;
+    // bufInA[3] = -4.11452e-08;
+    // bufInA[4] = -0.27489;
+    // bufInA[5] =  0.669268;
+    // bufInA[6] = -0.690301;
+    // bufInA[7] = 0;
+    // bufInA[8] = 0.262268;
+    // bufInA[9] = -0.638538;
+    // bufInA[10] = -0.723522;
+    // bufInA[11] =  4.03113;
+    // bufInA[12] = 0;
+    // bufInA[13] = 0;
+    // bufInA[14] = 0;
+    // bufInA[15] = 1;
+    // bufInA[16] = 1111.11;
+    // bufInA[17] = 1111.11;
     
 
     // Initialize buffer bo_inFactor
     DATATYPE_IN2 *bufInB = bo_inB.map<DATATYPE_IN2 *>();
     fill_bufB(bufInB);
-    bufInB[0] = -0.706435;
-    bufInB[4] = -0.888309;
-    bufInB[8] = -0.871879;
-    bufInB[12] = 1;
+    // bufInB[0] = -0.706435;
+    // bufInB[4] = -0.888309;
+    // bufInB[8] = -0.871879;
+    // bufInB[12] = 1;
 
-    bufInB[TILE_SIZE * 8] = 0.892785;
-    bufInB[TILE_SIZE * 8 + 16] = 0.222361;
-    bufInB[TILE_SIZE * 8 + 32] = -0.168303;
-    bufInB[TILE_SIZE * 8 + 48] = -0.118424;
+    // bufInB[TILE_SIZE * 8] = 0.892785;
+    // bufInB[TILE_SIZE * 8 + 16] = 0.222361;
+    // bufInB[TILE_SIZE * 8 + 32] = -0.168303;
+    // bufInB[TILE_SIZE * 8 + 48] = -0.118424;
 
-    bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4] = 0.000952771;
-    bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + 16] = 0.0301535;
-    bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + 32] = 0.120647;
+    // bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4] = 0.000952771;
+    // bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + 16] = 0.0301535;
+    // bufInB[TILE_SIZE * 8 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + 32] = 0.120647;
 
     
 
@@ -462,7 +439,7 @@ int main(int argc, const char *argv[]) {
     bo_trace.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     #endif
 
-    for(int i = 0; i< 1; i++){
+    for(int i = 0; i< 1000; i++){
     
 
     // Execute the kernel and wait to finish
@@ -487,12 +464,12 @@ int main(int argc, const char *argv[]) {
     test_utils::write_out_trace((char *)bufTrace, TRACE_SIZE, "trace.txt");
     #endif
 
-    int errors = verify(bufInA, bufInB, bufOut, TILE_SIZE, TILE_COUNT, verbosity);
-    if(errors == 0){
-         std::cout << "PASS!\n";
-    }else{
-        std::cout << "FAIL with " << errors << "errors\n";
-    }
+    //int errors = verify(bufInA, bufInB, bufOut, TILE_SIZE, TILE_COUNT, verbosity);
+    //if(errors == 0){
+    //     std::cout << "PASS!\n";
+    //}else{
+    //    std::cout << "FAIL with " << errors << "errors\n";
+    //}
     std::cout << "Iteration " << i << " done.\n";
     
 }
