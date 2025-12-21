@@ -41,11 +41,14 @@ def precomp(dev):
         sub_tiles = line_size // tile_size
         world_to_view_size = 4 * 4 + 2
         get_camera_size = 4 * 4
+        campos_coeff_size = 8 + 4 * 4
         conv3D_num = 4
 
+        essentials_ty = np.ndarray[(world_to_view_size + get_camera_size + campos_coeff_size,), np.dtype[xfr_dtype]]
 
         w2v_ty = np.ndarray[(world_to_view_size,), np.dtype[xfr_dtype]]
         get_camera_ty = np.ndarray[(get_camera_size,), np.dtype[xfr_dtype]]
+        campos_coeff_ty = np.ndarray[(campos_coeff_size,), np.dtype[xfr_dtype]]
         
         send1_ty = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         gaussian_send_ty = np.ndarray[(8*line_size // sub_tiles,), np.dtype[xfr_dtype]]
@@ -61,16 +64,22 @@ def precomp(dev):
         conv3D_return_ty_accum = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         cov2D_return_ty = np.ndarray[(4 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         cov2D_return_accum_ty = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+
         
+        send3_ty = np.ndarray[(56 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        color_data_ty = np.ndarray[(56 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         return1_ty = np.ndarray[(6 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
         return2_ty = np.ndarray[(4 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
-        essentials_ty = np.ndarray[(world_to_view_size + get_camera_size,), np.dtype[xfr_dtype]]
+        return3_ty = np.ndarray[(4 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
+        color_return_ty = np.ndarray[(4 * line_size  // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        color_inter_ty = np.ndarray[(16 * line_size  // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+
 
         # this is required for runtime sequence
-        send_ty = np.ndarray[(line_size * 15,), np.dtype[xfr_dtype]]
-        return_ty = np.ndarray[(line_size * 10,), np.dtype[xfr_dtype]]
+        send_ty = np.ndarray[(line_size * 71,), np.dtype[xfr_dtype]]
+        return_ty = np.ndarray[(line_size * 14,), np.dtype[xfr_dtype]]
 
         # AIE Core Function declarations
         w2v_func = external_func(
@@ -93,22 +102,36 @@ def precomp(dev):
             "f32_get_conv2D_" + str(i), inputs=[to_cov2D_ty, conv3D_return_ty, cov2D_return_ty]
         ) for i in range(conv3D_num)]
 
+        color_func_pre = external_func(
+            "f32_get_color_pre", inputs=[campos_coeff_ty, color_data_ty, color_inter_ty]
+        )
+        
+        color_func_post = external_func(
+            "f32_get_color_post", inputs=[color_inter_ty, color_data_ty, color_return_ty]
+        )
+
         # Tile declarations
         ShimTile0 = tile(0, 0)
         MemTile0 = tile(0, 1)
         ShimTile1 = tile(1, 0)
         MemTile1 = tile(1, 1)
+        ShimTile3 = tile(3, 0)
+        MemTile3 = tile(3, 1)
+        MemTile4 = tile(4, 1)
         ComputeTileV2w = tile(0, 2)
         ComputeTileCamera = tile(0, 3)
         ComputeTileJR = tile(0, 4)
         ComputeTileConv3Ds = [tile(1, 2), tile(1,3), tile(1, 4), tile(1,5)]
         ComputeTileConv2Ds = [tile(2, 2), tile(2, 3), tile(2, 4), tile(2, 5)]
+        ComputeTileColorsPre = [tile(3, 2), tile(3, 3), tile(3, 4), tile(3, 5)]
+        ComputeTileColorsPost = [tile(4, 2), tile(4, 3), tile(4, 4), tile(4, 5)]
 
         # AIE-array data movement with object fifos
         of_essentials = object_fifo("essentials", ShimTile0, MemTile0, 2, essentials_ty)
         of_w2v = object_fifo("w2v", MemTile0, [ComputeTileV2w, ComputeTileJR], 2, w2v_ty)
         of_camera = object_fifo("camera", MemTile0, ComputeTileCamera, 2, get_camera_ty)
-        object_fifo_link(of_essentials, [of_w2v, of_camera], [], [0, world_to_view_size])
+        of_coeff = object_fifo("coeff", MemTile0, ComputeTileColorsPre, 2, campos_coeff_ty)
+        object_fifo_link(of_essentials, [of_w2v, of_camera, of_coeff], [], [0, world_to_view_size, world_to_view_size + get_camera_size])
 
         of_send1 = object_fifo("send1", ShimTile0, MemTile0, 2, send1_ty)
         of_gaussian = object_fifo("gaussian", MemTile0, [ComputeTileV2w, ComputeTileCamera], 2, gaussian_send_ty)
@@ -141,6 +164,15 @@ def precomp(dev):
         of_cov2D_returns = [object_fifo("cov2D_return_" + str(i), ComputeTileConv2Ds[i], MemTile1, 2, cov2D_return_ty) for i in range(conv3D_num)]
         object_fifo_link(of_cov2D_returns, of_out2_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
 
+        of_color_inters = [object_fifo("color_inter_" + str(i), ComputeTileColorsPre[i], ComputeTileColorsPost[i], 2, color_inter_ty) for i in range(conv3D_num)]
+
+        of_color_return_unit = object_fifo("color_return_unit",  MemTile4, ShimTile3, 2, return3_ty)
+        of_color_returns = [object_fifo("color_return_" + str(i), ComputeTileColorsPost[i], MemTile4, 2, color_return_ty) for i in range(conv3D_num)]
+        object_fifo_link(of_color_returns, of_color_return_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
+        
+        of_color_send_unit = object_fifo("color_send_unit", ShimTile3, MemTile3, 2, send3_ty)
+        of_color_sends = [object_fifo("color_send_" + str(i), MemTile3, [ComputeTileColorsPre[i], ComputeTileColorsPost[i]], 2, color_data_ty) for i in range(conv3D_num)]
+        object_fifo_link(of_color_send_unit, of_color_sends, [], [56 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)])
 
 
         # Compute tile for Projection Mat
@@ -210,10 +242,41 @@ def precomp(dev):
                         of_to_cov2Ds[i].release(ObjectFifoPort.Consume, 1)
                         of_cov2D_returns[i].release(ObjectFifoPort.Produce,1)
                         of_JR_cov2Ds.release(ObjectFifoPort.Consume, 1)
+        
+        #color tile 1
+        for i in range(conv3D_num):
+            @core(ComputeTileColorsPre[i], "precomp.a")
+            def core_body_color():
+                for _ in range_(0xFFFFFFFF):
+                    elemIn1 = of_coeff.acquire(ObjectFifoPort.Consume, 1)
+                    for _ in range_(sub_tiles):
+                        elemIn2 = of_color_sends[i].acquire(ObjectFifoPort.Consume, 1)
+                        elemOut = of_color_inters[i].acquire(ObjectFifoPort.Produce, 1)
+                        color_func_pre(elemIn1, elemIn2, elemOut)
+                        of_color_inters[i].release(ObjectFifoPort.Produce,1)
+                        of_color_sends[i].release(ObjectFifoPort.Consume, 1)
+                    of_coeff.release(ObjectFifoPort.Consume, 1)
+        
+        #color tile 2
+        for i in range(conv3D_num):
+            @core(ComputeTileColorsPost[i], "precomp.a")
+            def core_body_color():
+                for _ in range_(0xFFFFFFFF):
+                    for _ in range_(sub_tiles):
+                        elemOut = of_color_returns[i].acquire(ObjectFifoPort.Produce, 1)
+                        elemIn1 = of_color_inters[i].acquire(ObjectFifoPort.Consume, 1)
+                        elemIn2 = of_color_sends[i].acquire(ObjectFifoPort.Consume, 1)
+                        color_func_post(elemIn1, elemIn2, elemOut)
+                        of_color_sends[i].release(ObjectFifoPort.Consume, 1)
+                        elemIn2 = of_color_inters[i].release(ObjectFifoPort.Consume, 1)
+                        of_color_returns[i].release(ObjectFifoPort.Produce, 1)
 
-        tiles_to_trace = [ComputeTileCamera, ShimTile0]
+
+
+
+        tiles_to_trace = [ComputeTileColorsPre[0], ShimTile3]
         if trace_size > 0:
-            trace_utils.configure_packet_tracing_flow(tiles_to_trace, ShimTile0)
+            trace_utils.configure_packet_tracing_flow(tiles_to_trace, ShimTile3)
 
 
         # To/from AIE-array data movement
@@ -222,38 +285,49 @@ def precomp(dev):
             if trace_size > 0:
                 trace_utils.configure_packet_tracing_aie2(
                     tiles_to_trace=tiles_to_trace,
-                    shim=ShimTile0,
+                    shim=ShimTile3,
                     trace_size=trace_size,
                 )
-            import_task = shim_dma_single_bd_task(of_essentials, A, sizes=[1, 1, 1, world_to_view_size + get_camera_size])
+            import_task = shim_dma_single_bd_task(of_essentials, A, sizes=[1, 1, 1, world_to_view_size + get_camera_size + campos_coeff_size])
             gaussian_task = shim_dma_single_bd_task(of_send1, B, 
                 sizes = [1, 1, sub_tiles, 8 * tile_size],
-                strides = [0,0,tile_size * 15,1],
+                strides = [0,0,tile_size * 71,1],
                 offset = 0
             )
             rot_scale_task = shim_dma_single_bd_task(of_send2, B,
                 sizes = [1, 1, sub_tiles, 7 * tile_size],
-                strides = [0,0,tile_size * 15,1],
+                strides = [0,0,tile_size * 71,1],
                 offset = 8 * tile_size
+            )
+            color_task = shim_dma_single_bd_task(of_color_send_unit, B,
+                sizes = [1, sub_tiles, 7, 8 * tile_size],
+                strides = [0, tile_size * 71, 8 * tile_size,1],
+                offset = 15 * tile_size
             )
             out1_task = shim_dma_single_bd_task(
                 of_out1_unit, C, issue_token=True,
                 sizes = [1, 1, sub_tiles, 6 * tile_size],
-                strides = [0,0,tile_size * 10,1],
+                strides = [0,0,tile_size * 14,1],
                 offset = 0
             )
             out2_task = shim_dma_single_bd_task(
                 of_out2_unit, C, issue_token=True,
                 sizes = [1, 1, sub_tiles, 4 * tile_size],
-                strides = [0,0,tile_size * 10,1],
+                strides = [0,0,tile_size * 14,1],
                 offset = 6 * tile_size
             )
+            out3_task = shim_dma_single_bd_task(
+                of_color_return_unit, C, issue_token=True,
+                sizes = [1, 1, sub_tiles, 4 * tile_size],
+                strides = [0, 0, tile_size * 14, 1],
+                offset = 10 * tile_size
+            )
 
-            dma_start_task(import_task, gaussian_task, rot_scale_task, out1_task, out2_task)
-            dma_await_task(out1_task, out2_task)
-            dma_free_task(import_task, gaussian_task, rot_scale_task)
+            dma_start_task(import_task, gaussian_task, rot_scale_task, color_task, out1_task, out2_task, out3_task)
+            dma_await_task(out1_task, out2_task, out3_task)
+            dma_free_task(import_task, gaussian_task, rot_scale_task, color_task)
             if trace_size > 0:
-                trace_utils.gen_trace_done_aie2(ShimTile0)
+                trace_utils.gen_trace_done_aie2(ShimTile3)
     
 
 
@@ -268,9 +342,10 @@ opts = p.parse_args(sys.argv[1:])
 if opts.device == "npu":
     dev = AIEDevice.npu1_1col  # Four columns of NPU1, the maximum available
 elif opts.device == "npu2":
-    dev = AIEDevice.npu2_4col  # Eight columns of NPU2, the maximum available
+    dev = AIEDevice.npu2  # Eight columns of NPU2, the maximum available
 else:
     raise ValueError("[ERROR] Device name {} is unknown".format(opts.device))
+
 
 with mlir_mod_ctx() as ctx:
     precomp(dev)

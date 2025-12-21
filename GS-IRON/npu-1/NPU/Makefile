@@ -35,10 +35,9 @@ build/precomp.o: precomp.cc
 	mkdir -p ${@D}
 	${PEANO_INSTALL_DIR}/bin/clang++ ${PEANOWRAP2P_FLAGS} ${INCLUDES} -c $< -o $@
 
-asm:
+asm: subset.cc
 	mkdir -p ${@D}
-	${PEANO_INSTALL_DIR}/bin/clang++ -S ${PEANOWRAP2P_FLAGS} ${INCLUDES} -c precomp.cc -o build/precomp.s
-
+	${PEANO_INSTALL_DIR}/bin/clang++ ${PEANOWRAP2P_FLAGS} ${INCLUDES} -c $< -S -o build/subset.s
 
 build/precomp.a: build/precomp.o build/lut_based_ops.o
 	mkdir -p ${@D}

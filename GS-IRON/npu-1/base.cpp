@@ -93,9 +93,9 @@ void setup_npu(int argc, const char *argv[]){
                           XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
     bo_inA = xrt::bo(device, IN1_SIZE * sizeof(DATATYPE_IN1),
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-    bo_inB = xrt::bo(device, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2),
+    bo_inB = xrt::bo(device, CHUNK_SIZE * 71 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    bo_outC = xrt::bo(device, CHUNK_SIZE * 10 * sizeof(DATATYPE_OUT),
+    bo_outC = xrt::bo(device, CHUNK_SIZE * 14 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
                             
 
@@ -136,7 +136,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     for(int i=0; i < (numGaussians - 1) / CHUNK_SIZE + 1; i++){
 
         //copy the data first
-        memcpy(bufInB, group.xyz_buf.data() + i * CHUNK_SIZE * 15, CHUNK_SIZE * 15 * sizeof(DATATYPE_IN2));
+        memcpy(bufInB, group.xyz_buf.data() + i * CHUNK_SIZE * 71, CHUNK_SIZE * 71 * sizeof(DATATYPE_IN2));
         auto start_npu = std::chrono::steady_clock::now();
         bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
@@ -162,21 +162,23 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                     // save to gaussians, for now...
                     Gaussian3D &g = group.gaussians[i*CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k];
                 
-                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + j*16 + k * 4]);
-                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + j*16 + k * 4 + 1]);
-                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + j*16 + k * 4 + 2]);
+                    g.xyz_view[0] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + j*16 + k * 4]);
+                    g.xyz_view[1] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + j*16 + k * 4 + 1]);
+                    g.xyz_view[2] = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + j*16 + k * 4 + 2]);
                     
-                    g.screen_coord[0] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 4 + j*8 + k]) + 1) * 0.5 * cam.width - 0.5;
-                    g.screen_coord[1] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 4 + j*8 + k + 4]) + 1) * 0.5 * cam.height - 0.5;
+                    g.screen_coord[0] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 4 + j*8 + k]) + 1) * 0.5 * cam.width - 0.5;
+                    g.screen_coord[1] = (bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 4 + j*8 + k + 4]) + 1) * 0.5 * cam.height - 0.5;
 
-                    float a1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 6 + (j*4 + k) * 4]);
-                    float a2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 6 + (j*4 + k) * 4 + 1]);
-                    float a3 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 6 + (j*4 + k) * 4 + 2]);
+                    float a1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 6 + (j*4 + k) * 4]);
+                    float a2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 6 + (j*4 + k) * 4 + 1]);
+                    float a3 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 6 + (j*4 + k) * 4 + 2]);
                     g.inv_cov_2d << a1, a2,
                                    a2, a3;
-                    g.radius = bfloat16_to_float(bufOut[TILE_SIZE * tile * 10 + TILE_SIZE * 6 + (j*4 + k) * 4 + 3]);
-                    
-
+                    g.radius = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 6 + (j*4 + k) * 4 + 3]);
+                    float c1 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 10 + (j*4 + k) * 4]);
+                    float c2 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 10 + (j*4 + k) * 4 + 1]);
+                    float c3 = bfloat16_to_float(bufOut[TILE_SIZE * tile * 14 + TILE_SIZE * 10 + (j*4 + k) * 4 + 2]);
+                    g.color = Eigen::Vector3f(std::max(0.f, c1 + 0.5f), std::max(0.f, c2 + 0.5f), std::max(0.f, c3 + 0.5f));
                 }
             }
         }
@@ -190,7 +192,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     std::cout << "NPU itself Elapsed" << tmp << " micro sec\n";
     #endif
 
-    //#ifndef __USE_NPU
+    // #ifndef __USE_NPU
     for(int i=0;i<numGaussians;i++){
         Gaussian3D &g = group.gaussians[i];
         // transform to view space
@@ -199,7 +201,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         Eigen::Vector4f pos_view = cam.full_proj * pos_vec;
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
-        //g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
+        // g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
         Eigen::Vector4f sample = (cam.world_to_view * pos_vec);
         for(int k = 0;k<3;k++){
             deviation.push_back(sample(k) / g.xyz_view[k]);
@@ -209,7 +211,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
         
     }
-    //#endif
+    // #endif
 
     // put Gaussian into tiles
     std::vector<Tile> tiles;
@@ -300,7 +302,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             }
         }
 	
-
+        #ifndef __USE_NPU
         Eigen::Vector3f colors;
         colors << 0.5f, 0.5f, 0.5f;
         // compute colors based on coefficients
@@ -335,6 +337,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             colors[i] = std::max(0.0f, colors[i]);
         }
         g.color = colors;
+        #endif
 
     }
     
@@ -457,9 +460,13 @@ int main(int argc, const char *argv[]){
 
     #ifdef __USE_NPU
     path = path + "/npu";
+    std::cout << "Using NPU for rendering." << std::endl;
     #else
     path = path + "/cpu";
+    std::cout << "Using CPU for rendering." << std::endl;
     #endif
+
+    std::cout << "doing dataset : " << name << std::endl;
 
     for(unsigned int i=0;i < rotations.size();i++){
         Camera cam;

@@ -58,9 +58,9 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
             }
     }
 
-    group.xyz_buf.resize(((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE * 15);
-    memset(group.xyz_buf.data(), 0, (((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 15) * sizeof(std::bfloat16_t));
-    int size = ((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 15;
+    group.xyz_buf.resize(((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE * 71);
+    memset(group.xyz_buf.data(), 0, (((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 71) * sizeof(std::bfloat16_t));
+    int size = ((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 71;
 
     // Read Gaussian data
     for(int i=0;i<count;i++){
@@ -72,13 +72,14 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
         int tile_itr = chunk_offset % TILE_SIZE;
         int loop_itr = tile_itr / 4 * 32;
         int loop_res = tile_itr % 4;
-        int loop_id = chunk_id * CHUNK_SIZE * 15 + TILE_SIZE * tile_id * 15 + loop_itr + loop_res;
+        int loop_id = chunk_id * CHUNK_SIZE * 71 + TILE_SIZE * tile_id * 71 + loop_itr + loop_res;
 
         int tile_id2 = tile_itr / (TILE_SIZE / CONV3D_TILE_NUM);
         int tile_itr2 = tile_itr % (TILE_SIZE / CONV3D_TILE_NUM);
-        int rot_id = chunk_id * CHUNK_SIZE * 15 + TILE_SIZE * tile_id * 15 + TILE_SIZE * 8 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + tile_itr2 / 16 * 64 + tile_itr2 % 16;
-        int scale_id = chunk_id * CHUNK_SIZE * 15 + TILE_SIZE * tile_id * 15 + TILE_SIZE * 8 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + tile_itr2 / 16 * 48 + tile_itr2 % 16;
-
+        int rot_id = chunk_id * CHUNK_SIZE * 71 + TILE_SIZE * tile_id * 71 + TILE_SIZE * 8 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + tile_itr2 / 16 * 64 + tile_itr2 % 16;
+        int scale_id = chunk_id * CHUNK_SIZE * 71 + TILE_SIZE * tile_id * 71 + TILE_SIZE * 8 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + tile_itr2 / 16 * 48 + tile_itr2 % 16;
+        int xyz_id_2 = chunk_id * CHUNK_SIZE * 71 + TILE_SIZE * tile_id * 71 + TILE_SIZE * 15 + tile_itr * 56;
+        int f_rest_id = xyz_id_2 + 8;
         
         #ifdef __USE_NPU
         group.xyz_buf[loop_id + 12] = 1;
@@ -100,6 +101,7 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
             if(propName == "x"){
                 #ifdef __USE_NPU
                 group.xyz_buf[loop_id] = float_to_bfloat16(value);
+                group.xyz_buf[xyz_id_2] = float_to_bfloat16(value);
                 #else
                 #endif
                 gaussian.xyz[0] = value;
@@ -107,6 +109,7 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
                 
                 #ifdef __USE_NPU
                 group.xyz_buf[loop_id + 4] = float_to_bfloat16(value);
+                group.xyz_buf[xyz_id_2 + 1] = float_to_bfloat16(value);
                 #else
                 #endif
                 gaussian.xyz[1] = value;
@@ -116,6 +119,7 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
                 
                 #ifdef __USE_NPU
                 group.xyz_buf[loop_id + 8] = float_to_bfloat16(value);
+                group.xyz_buf[xyz_id_2 + 2] = float_to_bfloat16(value);
                 #else
                 #endif
                 gaussian.xyz[2] = value;
@@ -172,13 +176,26 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
             }else if(propName == "opacity"){
                 gaussian.opacity = 1 / (1 + std::exp(-value)); //sigmoid
             }else if(propName == "f_dc_0"){
+                #ifdef __USE_NPU
+                group.xyz_buf[f_rest_id] = float_to_bfloat16(value);
+                #endif
                 gaussian.f_dc[0] = value;
             }else if(propName == "f_dc_1"){
+                #ifdef __USE_NPU
+                group.xyz_buf[f_rest_id + 16] = float_to_bfloat16(value);
+                #endif
                 gaussian.f_dc[1] = value;
             }else if(propName == "f_dc_2"){
+                #ifdef __USE_NPU
+                group.xyz_buf[f_rest_id + 32] = float_to_bfloat16(value);
+                #endif
                 gaussian.f_dc[2] = value;
             }else if(propName.rfind("f_rest_", 0) == 0){
                 int idx = std::stoi(propName.substr(7));
+                #ifdef __USE_NPU
+                int subidx = idx / 15 * 16 + idx % 15 + 1;
+                group.xyz_buf[f_rest_id + subidx] = float_to_bfloat16(value);
+                #endif
                 gaussian.f_rest[idx] = value;
             }
         }

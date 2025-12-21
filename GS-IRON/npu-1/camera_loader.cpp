@@ -45,6 +45,7 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C, float fovX){
     proj_mat = getProjMat(100,0.01,0.69,0.69);
 
     cam.full_proj = proj_mat * cam.world_to_view;
+    cam.pos = cam.world_to_view.transpose().inverse().block<1,3>(3,0);
     
     // set matrix for NPU computation
     #ifdef __USE_NPU
@@ -56,9 +57,16 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C, float fovX){
     }
     bufInA[16] = cam.fx;
     bufInA[17] = cam.fy;
+    bufInA[50] = cam.pos[0];
+    bufInA[51] = cam.pos[1];
+    bufInA[52] = cam.pos[2];
+    bufInA[53] = 0;
+    bufInA[54] = 0;
+    bufInA[55] = 0;
+    bufInA[56] = 0;
+    bufInA[57] = 0;
     #endif
     
-    cam.pos = cam.world_to_view.transpose().inverse().block<1,3>(3,0);
 }
 
 void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations, float &fovX) {
