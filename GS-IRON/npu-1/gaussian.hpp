@@ -32,6 +32,10 @@ struct Gaussian3D {
 struct GaussianGroup {
     std::vector<Gaussian3D> gaussians;
     std::vector<std::bfloat16_t> xyz_buf;
+    std::vector<std::bfloat16_t> xyz_view_buf;
+    std::vector<float> screen_coord_buf;
+    std::vector<std::bfloat16_t> cov2d_buf;
+    std::vector<std::bfloat16_t> color_buf;
 };
 
 #endif // GAUSSIAN_H

@@ -57,10 +57,23 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
 
             }
     }
+    int total_lines = ((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE;
+    #ifdef __USE_NPU
+    group.xyz_buf.resize(total_lines * 71);
+    memset(group.xyz_buf.data(), 0, (total_lines * 71) * sizeof(std::bfloat16_t));
 
-    group.xyz_buf.resize(((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE * 71);
-    memset(group.xyz_buf.data(), 0, (((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 71) * sizeof(std::bfloat16_t));
-    int size = ((count / CHUNK_SIZE - 1) + 1) * CHUNK_SIZE * 71;
+    group.xyz_view_buf.resize(total_lines * 4);
+    memset(group.xyz_view_buf.data(), 0, (total_lines * 4) * sizeof(std::bfloat16_t));
+
+    group.screen_coord_buf.resize(total_lines * 2);
+    memset(group.screen_coord_buf.data(), 0, (total_lines * 2) * sizeof(float));
+
+    group.cov2d_buf.resize(total_lines * 4);
+    memset(group.cov2d_buf.data(), 0, (total_lines * 4) * sizeof(std::bfloat16_t));
+
+    group.color_buf.resize(total_lines * 4);
+    memset(group.color_buf.data(), 0, (total_lines * 4) * sizeof(std::bfloat16_t));
+    #endif
 
     // Read Gaussian data
     for(int i=0;i<count;i++){
