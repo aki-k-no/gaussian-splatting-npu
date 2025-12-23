@@ -172,9 +172,10 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         // transform to view space
         Eigen::Vector4f pos_vec;
         pos_vec << g.xyz[0], g.xyz[1], g.xyz[2], 1.0f;
-        Eigen::Vector4f pos_view = float_to_bfloat_vec4f(cam.full_proj * pos_vec);
+        Eigen::Vector4f pos_view = (cam.full_proj * pos_vec);
         float w = pos_view[3];
         pos_view /= w; // prevent div by zero
+        pos_view = float_to_bfloat_vec4f(pos_view);
         #ifndef __USE_NPU
         g.xyz_view = (cam.world_to_view * float_to_bfloat_vec4f(pos_vec)).head<3>();
         #endif
@@ -251,10 +252,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
 	    covariance2D(1,1) = float_to_bfloat16_scale(h_var + covariance2D(1,1));
     	const float det_cov_plus_h_cov = float_to_bfloat16_scale(float_to_bfloat16_scale(covariance2D(0,0) * covariance2D(1,1)) - float_to_bfloat16_scale(covariance2D(1,0) * covariance2D(1,0)));
         float sample = float_to_bfloat16_scale(covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0));
-        if(true){
-            std::cout << sample << " " << det_cov_plus_h_cov << "\n";
-            std::cout << covariance2D(0,0) << " " <<  covariance2D(0,1) << " " <<  covariance2D(1,1) << "\n";
-        }
+        
 
 	    float h_convolution_scaling = 1.0f;  
         if(antialiasing)
@@ -292,7 +290,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
         Eigen::Vector3f colors;
         colors << 0.5f, 0.5f, 0.5f;
         // compute colors based on coefficients
-        Eigen::Vector3f dif = float_to_bfloat_vec3f(cam.pos - g.xyz);
+        Eigen::Vector3f dif = float_to_bfloat_vec3f(g.xyz - cam.pos);
         dif = float_to_bfloat_vec3f(dif / dif.norm());
         //implementation here is referenced from forward.cu from https://github.com/graphdeco-inria/gaussian-splatting 
   		float x = dif[0];
@@ -371,7 +369,7 @@ void render(std::string ply_name, Eigen::Matrix4f baseMat_W2C, std::string img_n
                         diff[1] = pixel_y + 0.5f - g.screen_coord[1];
                        
                         float exponent = -0.5f * diff.transpose() * g.inv_cov_2d * diff;
-                        if(exponent > 0.f){
+                        if(exponent > 0.f || std::isnan(exponent)){
                             continue;
                         }
                         float weight = std::exp(exponent); // prevent overflow

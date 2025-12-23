@@ -59,7 +59,7 @@ def precomp(dev):
         rot_and_scale_send_ty = np.ndarray[(7 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         gaussian_back1_ty = np.ndarray[(4*line_size // sub_tiles,), np.dtype[xfr_dtype]]
         to_cov2D_ty = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
-        gaussian_back2_ty = np.ndarray[(2 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        gaussian_back2_ty = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         conv3D_return_ty = np.ndarray[(8 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         conv3D_return_ty_accum = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         cov2D_return_ty = np.ndarray[(4 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
@@ -79,7 +79,7 @@ def precomp(dev):
 
         # this is required for runtime sequence
         send_ty = np.ndarray[(line_size * 71,), np.dtype[xfr_dtype]]
-        return_ty = np.ndarray[(line_size * 14,), np.dtype[xfr_dtype]]
+        return_ty = np.ndarray[(line_size * 16,), np.dtype[xfr_dtype]]
 
         # AIE Core Function declarations
         w2v_func = external_func(
@@ -150,19 +150,18 @@ def precomp(dev):
         
         of_out1 = object_fifo("out1", ComputeTileV2w, [MemTile0, ComputeTileJR], 2, gaussian_back1_ty)
         of_out2 = object_fifo("out2", ComputeTileCamera, MemTile0, 2, gaussian_back2_ty)
-        of_out1_unit = object_fifo("out1_unit",  MemTile0, ShimTile0, 2, return1_ty)
-
-        fifo_back1_link_list = [of_out1, of_out2]
-        fifo_back1_offset_list = [0, 4*line_size // sub_tiles]
-        object_fifo_link(fifo_back1_link_list, of_out1_unit, fifo_back1_offset_list, [])
+        of_out1_unit = object_fifo("out1_unit",  MemTile0, ShimTile0, 2, gaussian_back1_ty)
+        of_out2_unit = object_fifo("out2_unit",  MemTile0, ShimTile0, 2, gaussian_back2_ty)
+        object_fifo_link(of_out1, of_out1_unit, [], [])
+        object_fifo_link(of_out2, of_out2_unit, [], [])
 
         of_JR_cov2Ds = object_fifo("to_cov2D", ComputeTileJR, ComputeTileConv2Ds, 2, to_cov2D_ty)
     
         of_to_cov2Ds = [object_fifo("cov3Dto2D_" + str(i), ComputeTileConv3Ds[i], ComputeTileConv2Ds[i], 2, conv3D_return_ty) for i in range(conv3D_num)]
         
-        of_out2_unit = object_fifo("out2_unit",  MemTile1, ShimTile1, 2, cov2D_return_accum_ty)
+        of_out3_unit = object_fifo("out3_unit",  MemTile1, ShimTile1, 2, cov2D_return_accum_ty)
         of_cov2D_returns = [object_fifo("cov2D_return_" + str(i), ComputeTileConv2Ds[i], MemTile1, 2, cov2D_return_ty) for i in range(conv3D_num)]
-        object_fifo_link(of_cov2D_returns, of_out2_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
+        object_fifo_link(of_cov2D_returns, of_out3_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
 
         of_color_inters = [object_fifo("color_inter_" + str(i), ComputeTileColorsPre[i], ComputeTileColorsPost[i], 2, color_inter_ty) for i in range(conv3D_num)]
 
@@ -306,25 +305,31 @@ def precomp(dev):
             )
             out1_task = shim_dma_single_bd_task(
                 of_out1_unit, C, issue_token=True,
-                sizes = [1, 1, sub_tiles, 6 * tile_size],
-                strides = [0,0,tile_size * 14,1],
+                sizes = [1, 1, 1, 4 * line_size],
+                strides = [0, 0, 0, 1],
                 offset = 0
             )
             out2_task = shim_dma_single_bd_task(
                 of_out2_unit, C, issue_token=True,
-                sizes = [1, 1, sub_tiles, 4 * tile_size],
-                strides = [0,0,tile_size * 14,1],
-                offset = 6 * tile_size
+                sizes = [1, 1, 1, 4 * line_size],
+                strides = [0, 0, 0, 1],
+                offset = 4 * line_size
             )
             out3_task = shim_dma_single_bd_task(
+                of_out3_unit, C, issue_token=True,
+                sizes = [1, 1, 1, 4 * line_size],
+                strides = [0, 0, 0, 1],
+                offset = 8 * line_size
+            )
+            out4_task = shim_dma_single_bd_task(
                 of_color_return_unit, C, issue_token=True,
-                sizes = [1, 1, sub_tiles, 4 * tile_size],
-                strides = [0, 0, tile_size * 14, 1],
-                offset = 10 * tile_size
+                sizes = [1, 1, 1, 4 * line_size],
+                strides = [0, 0, 0, 1],
+                offset = 12 * line_size
             )
 
-            dma_start_task(import_task, gaussian_task, rot_scale_task, color_task, out1_task, out2_task, out3_task)
-            dma_await_task(out1_task, out2_task, out3_task)
+            dma_start_task(import_task, gaussian_task, rot_scale_task, color_task, out1_task, out2_task, out3_task, out4_task)
+            dma_await_task(out1_task, out2_task, out3_task, out4_task)
             dma_free_task(import_task, gaussian_task, rot_scale_task, color_task)
             if trace_size > 0:
                 trace_utils.gen_trace_done_aie2(ShimTile3)

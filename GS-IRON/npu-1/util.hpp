@@ -28,4 +28,11 @@ inline std::bfloat16_t float_to_bfloat16(float f) {
     return static_cast<std::bfloat16_t>(round_to_bfloat16(f));
 }
 
+inline float get_float_from_pointer(void* ptr) {
+    float value;
+    float* p = reinterpret_cast<float*>(ptr);
+    value = p[0];
+    return value;
+}
+
 #endif // UTIL_H

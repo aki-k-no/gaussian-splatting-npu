@@ -30,6 +30,7 @@ const int N=4;
 using bf16 = bfloat16;
 
 using MMUL = aie::mmul<4, 8, 4, bfloat16, bfloat16>;
+using MMUL2 = aie::mmul<4, 8, 4, float, float>;
 // projection from world to view space
 
 // note that size of proj mat is always 4x4, gaussian is 4xN
@@ -123,10 +124,10 @@ void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *r
         y_padded1= aie::load_v<32>(gaussians);
         y_padded2= aie::load_v<32>(gaussians + 32);
 
-        aie::vector<bf16, 16> output_nonormed1 = mmul1.to_vector<bf16>();
-        aie::vector<bf16, 16> output_nonormed2 = mmul2.to_vector<bf16>();
+        aie::vector<float, 16> output_nonormed1 = mmul1.to_vector<float>();
+        aie::vector<float, 16> output_nonormed2 = mmul2.to_vector<float>();
         // normalize
-        aie::vector<bf16, 16> norm_vec = aie::broadcast<bf16, 16>(output_nonormed1[12]);
+        aie::vector<float, 16> norm_vec = aie::broadcast<float, 16>(output_nonormed1[12]);
         //hope compiler optimize this
         norm_vec[1] = output_nonormed1[13];
         norm_vec[2] = output_nonormed1[14];
@@ -156,10 +157,10 @@ void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *r
         output_nonormed1[15] = output_nonormed2[7];
 
         //aie::store_v(output, aie::add(aie::mul(aie::div(output_nonormed1, norm_vec).to_vector<bf16>(), bf16(0.5)), bf16(0.5)).to_vector<bf16>());
-        aie::store_v(output, aie::div(output_nonormed1, norm_vec).to_vector<bf16>());
+        aie::store_v((float *)output, aie::div(output_nonormed1, norm_vec).to_vector<float>());
 
         // store data
-        output += 16;
+        output += 32;
          
     }
     return;
@@ -683,19 +684,19 @@ void get_color_post(bf16 *restrict xyz_factors, bf16 *restrict gaussians_data, b
         color1 = aie::mul(color1, xyz_factor);
         color1 = aie::mul(color1, sh_coeff);
         bf16 result1 = aie::reduce_add(color1);
-        output[0] = result1;
+        output[0] = result1 + bf16(0.5);
 
         aie::vector<bf16, 16> color2 = aie::concat(aie::load_v<8>(gaussians_data + 16), aie::load_v<8>(gaussians_data + 24));
         color2 = aie::mul(color2, xyz_factor);
         color2 = aie::mul(color2, sh_coeff);
         bf16 result2 = aie::reduce_add(color2);
-        output[1] = result2;
+        output[1] = result2 + bf16(0.5);
 
         aie::vector<bf16, 16> color3 = aie::concat(aie::load_v<8>(gaussians_data + 32), aie::load_v<8>(gaussians_data + 40));
         color3 = aie::mul(color3, xyz_factor);
         color3 = aie::mul(color3, sh_coeff);
         bf16 result3 = aie::reduce_add(color3);
-        output[2] = result3;
+        output[2] = result3 + bf16(0.5);
         
         gaussians_data += 56;
         output += 4;
