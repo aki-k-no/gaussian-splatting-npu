@@ -64,6 +64,9 @@ std::vector<float> deviation3;
 std::vector<float> deviation4;
 std::vector<float> deviation5;
 std::vector<float> deviation6;
+
+std::vector<float> ave_npu_time;
+std::vector<float> ave_total_time;
 void setup_npu(int argc, const char *argv[]){
 
     
@@ -110,6 +113,95 @@ void setup_npu(int argc, const char *argv[]){
 
 }
 
+int cnt = 0;
+inline bool compute_cov2D(GaussianGroup &group, Gaussian3D& g, Camera &cam, std::array<int, 2> &grid, std::vector<Tile> &tiles){
+    
+        // Eigen::Vector4f pos_vec;
+        // pos_vec << g.xyz[0], g.xyz[1], g.xyz[2], 1.0f;
+        // g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
+        
+        Eigen::Matrix3f R;
+        // convert quaternion to rotation matrix
+        Eigen::Vector<float, 4> Rot;
+        Rot << g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3];
+        Rot.normalize();
+        float qw = Rot[0];  
+        float qx = Rot[1];  
+        float qy = Rot[2];  
+        float qz = Rot[3];
+        R << 1 - 2*qy*qy - 2*qz*qz, 2*qx*qy - 2*qz*qw, 2*qx*qz + 2*qy*qw,
+             2*qx*qy + 2*qz*qw, 1 - 2*qx*qx - 2*qz*qz, 2*qy*qz - 2*qx*qw,
+             2*qx*qz - 2*qy*qw, 2*qy*qz + 2*qx*qw, 1 - 2*qx*qx - 2*qy*qy;
+        
+        Eigen::Matrix3f S;
+        S << g.scale[0], 0.0f, 0.0f,
+              0.0f, g.scale[1], 0.0f,
+              0.0f, 0.0f, g.scale[2];
+
+        Eigen::Matrix3f M;
+        M = R * S;
+        g.covariance3D = M * M.transpose();
+
+        //project to 2D covariance
+        #ifdef __USE_NPU
+        float _x = group.xyz_view_buf[g.index * 4];
+        float _y = group.xyz_view_buf[g.index * 4 + 1];
+        float _z = group.xyz_view_buf[g.index * 4 + 2];
+        #else
+        float _x = g.xyz_view[0];
+        float _y = g.xyz_view[1];
+        float _z = g.xyz_view[2];
+        #endif
+        Eigen::Matrix<float, 3, 3> J;
+        J << cam.fx / _z, 0.0f, -cam.fx * _x / (_z * _z),
+             0.0f, cam.fy / _z, -cam.fy * _y / (_z * _z),
+             0.f, 0.f, 0.f;
+        g.J_R = J * cam.world_to_view.block<3,3>(0,0);
+
+        Eigen::Matrix3f covariance2D = g.J_R * g.covariance3D * g.J_R.transpose(); 
+        constexpr float h_var = 0.3f;
+	    float det_cov2D = covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0);
+    	covariance2D(0,0) += h_var;
+	    covariance2D(1,1) += h_var;
+    	const float det_cov_plus_h_cov = covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0);
+	    float h_convolution_scaling = 1.0f;  
+        if(antialiasing)
+	    	h_convolution_scaling = std::sqrt(std::max(0.000025f, det_cov2D / det_cov_plus_h_cov)); // max for numerical stability
+            g.opacity *= h_convolution_scaling;
+        
+
+        float det = det_cov_plus_h_cov;
+        float det_inv = 1.f / det;
+        
+        // we use this afterwards
+
+        g.inv_cov_2d << covariance2D(1,1) * det_inv, -covariance2D(1,0) * det_inv,
+                        -covariance2D(1,0) * det_inv, covariance2D(0,0) * det_inv;
+
+        // filter with tile grid
+        // calc eignvals
+    	float b = 0.5f * (covariance2D(0,0) + covariance2D(1,1));
+        // short/long diameter
+	    float lambda1 = b + std::sqrt(std::max(0.1f, b * b - det));
+	    //float lambda2 = b - std::sqrt(std::max(0.1f, b * b - det));
+        g.radius = std::ceil(3.f * std::sqrt(lambda1));
+        
+        // get related tiles
+        std::array<int, 2> rect_min;
+        std::array<int, 2> rect_max;
+        getRelatedTiles(g.screen_coord, g.radius, rect_min, rect_max, grid);
+        if ((rect_max[0] - rect_min[0]) * (rect_max[1] - rect_min[1]) == 0)
+		    return false; // Gaussian does not contribute to the image, skip
+
+        // put them into tiles
+        for(int tx=rect_min[0];tx<rect_max[0];tx++){
+            for(int ty=rect_min[1];ty<rect_max[1];ty++){
+                tiles.at(tx * grid[1] + ty).unsorted_gaussians.push_back(&g);
+            }
+        }
+        return true;
+}
+
 void clear_buf(GaussianGroup &group){
     memset(group.xyz_view_buf.data(), 0, group.xyz_view_buf.size() * sizeof(std::bfloat16_t));
 
@@ -121,7 +213,9 @@ void clear_buf(GaussianGroup &group){
 
 }
 
-void move_to_gaussian(int i, GaussianGroup &group, DATATYPE_OUT *bufOut, int numGaussians, Camera& cam){
+int omit_count = 0;
+
+void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DATATYPE_OUT *bufOut, int numGaussians, Camera& cam, std::array<int, 2> &grid){
     // extract the data and save
     memcpy(group.xyz_view_buf.data() + i * CHUNK_SIZE * 4, bufOut, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
     memcpy(group.color_buf.data() + i * CHUNK_SIZE * 4, bufOut + CHUNK_SIZE * 12, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
@@ -130,27 +224,56 @@ void move_to_gaussian(int i, GaussianGroup &group, DATATYPE_OUT *bufOut, int num
     
     int load_idx = CHUNK_SIZE * 4;
     int load_idx2 = CHUNK_SIZE * 8;
-    for(int tile = 0; tile < TILE_COUNT; tile++){
-        for(int j = 0;j<TILE_SIZE / 4;j++){
-            for(int k = 0; k < 4; k++){
-                if(i * CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k >= numGaussians)
-                    break;
-            // save to gaussians, for now...
-            Gaussian3D &g = group.gaussians[i * CHUNK_SIZE + tile * TILE_SIZE + j * 4 + k];
-        
-            g.screen_coord[0] = (get_float_from_pointer(bufOut + load_idx + (j*8 + k) * 2) + 1) * 0.5 * cam.width - 0.5;
-            g.screen_coord[1] = (get_float_from_pointer(bufOut + load_idx + (j*8 + k) * 2 + 8) + 1) * 0.5 * cam.height - 0.5;
-                    
-            float a1 = bfloat16_to_float(bufOut[load_idx2]);
-            float a2 = bfloat16_to_float(bufOut[load_idx2 + 1]);
-            float a3 = bfloat16_to_float(bufOut[load_idx2 + 2]);
-            g.inv_cov_2d << a1, a2,
-                           a2, a3;
-            //g.radius = bfloat16_to_float(bufOut[CHUNK_SIZE * 8 + tile * TILE_SIZE * 4 + (j*4 + k) * 4 + 3]);
+    int gaussian_idx = i * CHUNK_SIZE;
+    for(int i = 0; i < CHUNK_SIZE; i++){
+        if(gaussian_idx >= numGaussians)
+            break;
+
+        Gaussian3D &g = group.gaussians[gaussian_idx];
+        gaussian_idx++;
+        if(group.xyz_view_buf[g.index * 4 + 2] < 0.2f){
+            // dont forget to increment load_idx2
             load_idx2 += 4;
+            load_idx += 4;
+            continue;
+        }
+        
+        g.screen_coord[0] = get_float_from_pointer(bufOut + load_idx) * cam.width - 0.5;
+        g.screen_coord[1] = get_float_from_pointer(bufOut + load_idx + 2) * cam.height - 0.5;
+                    
+        float a1 = bfloat16_to_float(bufOut[load_idx2]);
+        float a2 = bfloat16_to_float(bufOut[load_idx2 + 1]);
+        float a3 = bfloat16_to_float(bufOut[load_idx2 + 2]);
+        g.inv_cov_2d << a1, a2,
+                       a2, a3;
+        load_idx2 += 4;
+        load_idx += 4;
+        g.screen_depth_index = group.xyz_view_buf[g.index * 4 + 2] * (1 + 1/512.0f * g.opacity); // add opacity for sorting faster
+        if(std::isnan(a1) || std::isnan(a2) || std::isnan(a3) || g.scale[0] > 0.3f || g.scale[1] > 0.3f || g.scale[2] > 0.3f){
+            omit_count++;
+            compute_cov2D(group, g, cam, grid, tiles);
+            continue;
+        }
+        
+        
+        
+                
+        // get related tiles
+        std::array<int, 2> rect_min;
+        std::array<int, 2> rect_max;
+        getRelatedTiles(g.screen_coord, group.cov2d_buf[g.index * 4 + 3], rect_min, rect_max, grid);
+        if ((rect_max[0] - rect_min[0]) * (rect_max[1] - rect_min[1]) == 0)
+	        continue; // Gaussian does not contribute to the image, skip
+
+        
+        // put them into tiles
+        for(int tx=rect_min[0] * grid[1];tx<rect_max[0] * grid[1];tx+=grid[1]){
+            for(int ty=rect_min[1];ty<rect_max[1];ty++){
+                //if(g.index >= 80535 && g.index <= 80535){
+                    tiles.at(tx + ty).unsorted_gaussians.push_back(&g);
+                
             }
         }
-        load_idx += TILE_SIZE * 4;
     }
 }
 
@@ -182,16 +305,18 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
 
 
     int numGaussians =  gaussians.size();
-        bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-        bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-        bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-        bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+
+    #ifdef __USE_NPU
+    bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
     // instead, calculate with NPU
-    #ifdef __USE_NPU
     auto start_npu_all = std::chrono::steady_clock::now();
     
     uint32_t tmp = 0;
+
     //double buffering
     DATATYPE_OUT bufOut2[CHUNK_SIZE * 16];
     
@@ -212,7 +337,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     
     for(int i=0; i < (numGaussians - 1) / CHUNK_SIZE + 1; i++){
 
-        //copy the data first
+        //copy the data unless last
         if(i != (numGaussians - 1) / CHUNK_SIZE){
         start_npu = std::chrono::steady_clock::now();
         memcpy(bufInB, group.xyz_buf.data() + (i + 1) * CHUNK_SIZE * 71, CHUNK_SIZE * 71 * sizeof(DATATYPE_IN2));
@@ -220,11 +345,11 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         
         run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
         }
-        move_to_gaussian(i, group, bufOut2, numGaussians, cam);
+        move_to_gaussian(tiles, i, group, bufOut2, numGaussians, cam, grid);
         if(i != (numGaussians - 1) / CHUNK_SIZE){
         run.wait();
         
-        // Sync device to host memories
+        // Sync device to host memories unless last
         bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
         memcpy(bufOut2, bufOut, CHUNK_SIZE * 16 * sizeof(DATATYPE_IN2));
         end_npu = std::chrono::steady_clock::now();
@@ -237,7 +362,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     auto end_npu_all = std::chrono::steady_clock::now();
     auto diff_npu_all = std::chrono::duration_cast<std::chrono::microseconds>(end_npu_all - start_npu_all);
     std::cout << "Total NPU Elapsed" << diff_npu_all.count() << " micro sec\n";
-        
+
     std::cout << "NPU itself Elapsed" << tmp << " micro sec\n";
     #endif
 
@@ -251,108 +376,27 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         float w = pos_view[3];
         pos_view /= w + 0.0000001f; // prevent div by zero
         g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
-        Eigen::Vector4f sample = (cam.world_to_view * pos_vec);
-        for(int k = 0;k<3;k++){
-            deviation.push_back(sample(k) / g.xyz_view[k]);
-        }
+        
 
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
         
     }
-    #endif
 
-    
 
     // convergence 3D & 2D
     for(int i=0;i<numGaussians;i++){
         Gaussian3D &g = group.gaussians[i];
-        #ifdef __USE_NPU
-        if(group.xyz_view_buf[i * 4 + 2] < 0.2f){
-            continue;
-        }
-        #endif
-        #ifndef __USE_NPU
+        
         
         if(g.xyz_view[2] < 0.2f){
             continue;
         }
-        Eigen::Matrix3f R;
-        // convert quaternion to rotation matrix
-        Eigen::Vector<float, 4> Rot;
-        Rot << g.rotation[0], g.rotation[1], g.rotation[2], g.rotation[3];
-        Rot.normalize();
-        float qw = Rot[0];  
-        float qx = Rot[1];  
-        float qy = Rot[2];  
-        float qz = Rot[3];
-        R << 1 - 2*qy*qy - 2*qz*qz, 2*qx*qy - 2*qz*qw, 2*qx*qz + 2*qy*qw,
-             2*qx*qy + 2*qz*qw, 1 - 2*qx*qx - 2*qz*qz, 2*qy*qz - 2*qx*qw,
-             2*qx*qz - 2*qy*qw, 2*qy*qz + 2*qx*qw, 1 - 2*qx*qx - 2*qy*qy;
-        
-        Eigen::Matrix3f S;
-        S << g.scale[0], 0.0f, 0.0f,
-              0.0f, g.scale[1], 0.0f,
-              0.0f, 0.0f, g.scale[2];
 
-        Eigen::Matrix3f M;
-        M = R * S;
-        g.covariance3D = M * M.transpose();
-
-        // project to 2D covariance
-        float _z = g.xyz_view[2];
-        Eigen::Matrix<float, 3, 3> J;
-        J << cam.fx / _z, 0.0f, -cam.fx * g.xyz_view[0] / (_z * _z),
-             0.0f, cam.fy / _z, -cam.fy * g.xyz_view[1] / (_z * _z),
-             0.f, 0.f, 0.f;
-        g.J_R = J * cam.world_to_view.block<3,3>(0,0);
-
-        Eigen::Matrix3f covariance2D = g.J_R * g.covariance3D * g.J_R.transpose(); 
-        constexpr float h_var = 0.3f;
-	    float det_cov2D = covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0);
-    	covariance2D(0,0) += h_var;
-	    covariance2D(1,1) += h_var;
-    	const float det_cov_plus_h_cov = covariance2D(0,0) * covariance2D(1,1) - covariance2D(1,0) * covariance2D(1,0);
-	    float h_convolution_scaling = 1.0f;  
-        if(antialiasing)
-	    	h_convolution_scaling = std::sqrt(std::max(0.000025f, det_cov2D / det_cov_plus_h_cov)); // max for numerical stability
-            g.opacity *= h_convolution_scaling;
-        
-
-        float det = det_cov_plus_h_cov;
-        float det_inv = 1.f / det;
-        // we use this afterwards
-        g.inv_cov_2d << covariance2D(1,1) * det_inv, -covariance2D(1,0) * det_inv,
-                        -covariance2D(1,0) * det_inv, covariance2D(0,0) * det_inv;
-
-        // filter with tile grid
-        // calc eignvals
-    	float b = 0.5f * (covariance2D(0,0) + covariance2D(1,1));
-        // short/long diameter
-	    float lambda1 = b + std::sqrt(std::max(0.1f, b * b - det));
-	    //float lambda2 = b - std::sqrt(std::max(0.1f, b * b - det));
-        g.radius = std::ceil(3.f * std::sqrt(lambda1));
-        #endif
-        
-        // get related tiles
-        std::array<float, 2> rect_min;
-        std::array<float, 2> rect_max;
-        #ifdef __USE_NPU
-        getRelatedTiles(g.screen_coord, group.cov2d_buf[i * 4 + 3], rect_min, rect_max, grid);
-        #else
-        getRelatedTiles(g.screen_coord, g.radius, rect_min, rect_max, grid);
-        #endif
-        if ((rect_max[0] - rect_min[0]) * (rect_max[1] - rect_min[1]) == 0)
-		    continue; // Gaussian does not contribute to the image, skip
-
-        // put them into tiles
-        for(int tx=rect_min[0];tx<rect_max[0];tx++){
-            for(int ty=rect_min[1];ty<rect_max[1];ty++){
-                tiles.at(tx * grid[1] + ty).unsorted_gaussians.push_back(&g);
-            }
-        }
+        bool isSafe = compute_cov2D(group, g, cam, grid, tiles);
+        if(!isSafe)
+            continue;
 	
-        #ifndef __USE_NPU
         Eigen::Vector3f colors;
         colors << 0.5f, 0.5f, 0.5f;
         // compute colors based on coefficients
@@ -387,13 +431,17 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             colors[i] = std::max(0.0f, colors[i]);
         }
         g.color = colors;
-        #endif
-
+        
     }
+    std::cout << "Ill-conditioned gaussians: " << cnt << " / " << numGaussians << std::endl;
+    #endif
     
+    std::cout << "omit count due to small depth: " << omit_count << std::endl;
+
     auto middle = std::chrono::steady_clock::now();
     auto diff_mid = std::chrono::duration_cast<std::chrono::microseconds>(middle - start);
     std::cout << "Elapsed at middle" << diff_mid.count() << " micro sec\n";
+    ave_npu_time.push_back((float)diff_mid.count());        
 
     // sort gaussians in each tile based on depth
     for(int tx=0;tx<grid[0];tx++){
@@ -404,21 +452,15 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             std::sort(tile.unsorted_gaussians.begin(), tile.unsorted_gaussians.end(),
                 [&group](Gaussian3D* a, Gaussian3D* b) {
                     #ifdef __USE_NPU
-                    if(group.xyz_view_buf[a->index * 4 + 2] != group.xyz_view_buf[b->index * 4 + 2]){
-                        return group.xyz_view_buf[a->index * 4 + 2] < group.xyz_view_buf[b->index * 4 + 2];
-                    }
+                        return a->screen_depth_index < b->screen_depth_index;
                     #else
-                    if(a->xyz_view[2] != b->xyz_view[2]){
                         return a->xyz_view[2] < b->xyz_view[2];
-                    }
                     #endif
-                    // if tie, sort based on opacity
-                    // lower is in front
-                    return a->opacity < b->opacity;
                 });
             tile.sorted_gaussians = tile.unsorted_gaussians;
         }
     }
+    #ifdef __DO_RENDER
     // rendering
     cv::Mat image(cam.height, cam.width, CV_32FC3, cv::Scalar(0,0,0));
 
@@ -444,12 +486,9 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                         diff[0] = pixel_x + 0.5f - g.screen_coord[0];
                         diff[1] = pixel_y + 0.5f - g.screen_coord[1];
                        
-                        //#ifdef __USE_NPU
-                        //int idx = g.index * 4;
-                        //float exponent = -0.5f * (group.cov2d_buf[idx] * diff[0] * diff[0] + group.cov2d_buf[idx + 2] * diff[1] * diff[1]) - group.cov2d_buf[idx + 1] * diff[0] * diff[1];
-                        //#else
+                        
                         float exponent = -0.5f * (g.inv_cov_2d(0,0) * diff[0] * diff[0] + g.inv_cov_2d(1,1) * diff[1] * diff[1]) - g.inv_cov_2d(0,1) * diff[0] * diff[1];// diff.transpose() * g.inv_cov_2d * diff;
-                        //#endif
+                        
                         if(exponent > 0.f){ 
                             continue;
                         }
@@ -492,20 +531,17 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     auto end = std::chrono::steady_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
     std::cout << "Elapsed" << diff.count() << " micro sec\n";
+    ave_total_time.push_back((float)diff.count());
 
     //output to file
     cv::Mat display;
     image.convertTo(display, CV_8UC3, 255.0);
     cv::imwrite(img_name, display);
+    #endif
 
 }
 
-
-int main(int argc, const char *argv[]){
-
-    setup_npu(argc, argv);
-
-    std::string name = "chair";
+void render_once(std::string name){
     std::string path = "data/" + name;
 
 
@@ -533,8 +569,8 @@ int main(int argc, const char *argv[]){
     #endif
 
     std::cout << "doing dataset : " << name << std::endl;
-
     for(unsigned int i=0;i < rotations.size();i++){
+        std::cout << "iteration : " << i << std::endl;
         Camera cam;
         load_camera(cam, rotations[i], fovX);
         #ifdef __USE_NPU
@@ -543,10 +579,47 @@ int main(int argc, const char *argv[]){
         render(group, cam , path + "/output" + std::to_string(i) + ".png");
     }
 
+}
+
+int main(int argc, const char *argv[]){
+
+    #ifdef __USE_NPU
+    setup_npu(argc, argv);
+    #endif
+
+    std::vector<std::string> dataset_names = {
+        "chair",
+        "drum",
+        "ficus",
+        "hotdog",
+        "lego",
+        "materials",
+        "mic",
+        "ship"
+    };
+
+    for(const auto &name : dataset_names){
+        render_once(name);
+    }
+
+
+    // time output
+    float sum_precomp = 0.0f;
+    for(const auto &v : ave_npu_time){
+        sum_precomp += v;
+    }
+    float ave_precomp = sum_precomp / ave_npu_time.size();
+    std::cout << "Average NPU time: " << ave_precomp << " micro sec" << std::endl;
+    float sum_total = 0.0f;
+    for(const auto &v : ave_total_time){
+        sum_total += v;
+    }
+    float ave_total = sum_total / ave_total_time.size();
+    std::cout << "Average Total time: " << ave_total << " micro sec" << std::endl;
 
     for(int i=0;i<4;i++){
         
-        std::ofstream ofs("csv/jacobian/cov3_diff_data_" + name + "_" + std::to_string(i) + ".csv");
+        std::ofstream ofs("csv/jacobian/cov3_diff_data_" + std::to_string(i) + ".csv");
         if (ofs) {
             std::vector<float> deviation;
             switch(i){

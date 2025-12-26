@@ -24,6 +24,7 @@ struct Gaussian3D {
     float radius;                  // Radius for splatting
     Eigen::Matrix3f covariance3D;  // 3D covariance matrix
     Eigen::Matrix<float, 3, 3> J_R;     // Jacobian from 3D to 2D
+    float screen_depth_index;         // Depth in screen space (with opacity)
 
     int index;
 };

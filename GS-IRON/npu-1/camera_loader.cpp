@@ -23,30 +23,14 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C, float fovX){
     cam.width = 800;
     cam.height = 800;
     cam.fovX = fovX;
-    cam.fx = cam.width / (2 * tan(fovX / 2));
-    cam.fovY = 2 * atan(cam.height/(2*cam.fx));
-    cam.fy = cam.height / (2 * tan(cam.fovY / 2));
-    cam.cx = 400.0f;
-    cam.cy = 400.0f;
-    cam.tan_fovX = tan(cam.fovX / 2);
-    cam.tan_fovY = tan(cam.fovY / 2);
+    cam.fx = fov2focal(cam.fovX, cam.width);
+    cam.fovY = focal2fov(cam.fx, cam.height);
+    cam.fy = fov2focal(cam.fovY, cam.height);
 
 
-    // preprocess step
-    cam.world_to_view.block<3,3>(0,0) = cam.R;
-    cam.world_to_view.block<3,1>(0,3) = cam.T;
-    cam.world_to_view.block<1,1>(3,3) <<  1.f;
-    cam.world_to_view(3,0) = 0.f;
-    cam.world_to_view(3,1) = 0.f;
-    cam.world_to_view(3,2) = 0.f;
+    setup_camera(cam);
 
 
-    Eigen::Matrix4f proj_mat;
-    proj_mat = getProjMat(100,0.01,0.69,0.69);
-
-    cam.full_proj = proj_mat * cam.world_to_view;
-    cam.pos = cam.world_to_view.transpose().inverse().block<1,3>(3,0);
-    
     // set matrix for NPU computation
     #ifdef __USE_NPU
     for(int i=0;i<4;i++){

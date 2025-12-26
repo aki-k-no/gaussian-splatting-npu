@@ -125,39 +125,40 @@ void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *r
         y_padded2= aie::load_v<32>(gaussians + 32);
 
         aie::vector<float, 16> output_nonormed1 = mmul1.to_vector<float>();
+        aie::vector<float, 16> output_nonormed1_trans = aie::transpose(output_nonormed1, 2, 8);
+        aie::vector<float, 8> output_nonormed_half1 = aie::filter_even(output_nonormed1_trans);
+        output_nonormed_half1 = aie::transpose(output_nonormed_half1, 2, 4);
         aie::vector<float, 16> output_nonormed2 = mmul2.to_vector<float>();
+        aie::vector<float, 16> output_nonormed2_trans = aie::transpose(output_nonormed2, 2, 8);
+        aie::vector<float, 8> output_nonormed_half2 = aie::filter_even(output_nonormed2_trans);
+        output_nonormed_half2 = aie::transpose(output_nonormed_half2, 2, 4);
+        aie::vector<float, 16> output_nonormed = aie::concat(output_nonormed_half1, output_nonormed_half2);
         // normalize
         aie::vector<float, 16> norm_vec = aie::broadcast<float, 16>(output_nonormed1[12]);
         //hope compiler optimize this
-        norm_vec[1] = output_nonormed1[13];
-        norm_vec[2] = output_nonormed1[14];
-        norm_vec[3] = output_nonormed1[15];
-        
-        norm_vec[5] = output_nonormed1[13];
-        norm_vec[6] = output_nonormed1[14];
+        norm_vec[2] = output_nonormed1[13];
+        norm_vec[3] = output_nonormed1[13];
+        norm_vec[4] = output_nonormed1[14];
+        norm_vec[5] = output_nonormed1[14];
+        norm_vec[6] = output_nonormed1[15];
         norm_vec[7] = output_nonormed1[15];
 
         norm_vec[8] = output_nonormed2[12];
-        norm_vec[9] = output_nonormed2[13];
-        norm_vec[10] = output_nonormed2[14];
-        norm_vec[11] = output_nonormed2[15];
-
-        norm_vec[12] = output_nonormed2[12];
-        norm_vec[13] = output_nonormed2[13];
-        norm_vec[14] = output_nonormed2[14];
+        norm_vec[9] = output_nonormed2[12];
+        norm_vec[10] = output_nonormed2[13];
+        norm_vec[11] = output_nonormed2[13];
+        norm_vec[12] = output_nonormed2[14];
+        norm_vec[13] = output_nonormed2[14];
+        norm_vec[14] = output_nonormed2[15];
         norm_vec[15] = output_nonormed2[15];
 
-        output_nonormed1[8] = output_nonormed2[0];
-        output_nonormed1[9] = output_nonormed2[1];
-        output_nonormed1[10] = output_nonormed2[2];
-        output_nonormed1[11] = output_nonormed2[3];
-        output_nonormed1[12] = output_nonormed2[4];
-        output_nonormed1[13] = output_nonormed2[5];
-        output_nonormed1[14] = output_nonormed2[6];
-        output_nonormed1[15] = output_nonormed2[7];
+        // instead of dividing by 2 afterwards, multiply by 2 here
+        // or compiler goes crazy
+        norm_vec = aie::mul(norm_vec, 2.f);
 
-        //aie::store_v(output, aie::add(aie::mul(aie::div(output_nonormed1, norm_vec).to_vector<bf16>(), bf16(0.5)), bf16(0.5)).to_vector<bf16>());
-        aie::store_v((float *)output, aie::div(output_nonormed1, norm_vec).to_vector<float>());
+        aie::vector<float, 16> output_vec = aie::div(output_nonormed, norm_vec).to_vector<float>();
+        output_vec = aie::add(output_vec, 0.5f);
+        aie::store_v((float *)output, output_vec);
 
         // store data
         output += 32;
@@ -431,6 +432,7 @@ template <const int GAUSSIAN_SIZE, const int index>
 void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
     
     JR = JR + index * GAUSSIAN_SIZE / 4 * 8;
+    aie::vector<bf16, 16> nan_vec = aie::broadcast<bf16,16>(aie::sqrt(bf16(-1)));
     for(size_t i = 0; i < GAUSSIAN_SIZE / 64; i++){
         
         aie::vector<bf16, 16> vec_cov2D_0_0 = aie::zeros<bf16,16>();
@@ -500,18 +502,15 @@ void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
         aie::vector<bf16, 16> vec_cov2D_0_1_minus = aie::mul(vec_cov2D_0_1, bf16(-1));
 
         // compute det
-        aie::accum<accfloat, 16> det_accum = aie::mul(vec_cov2D_0_0, vec_cov2D_1_1);
-        //aie::vector<bf16, 16> det_min = aie::mul(aie::mul(det_accum.to_vector<bf16>(), bf16(0.0625)).to_vector<bf16>(), bf16(0.0625));
-        det_accum = aie::mac(det_accum, vec_cov2D_0_1, vec_cov2D_0_1_minus);
-        aie::vector<bf16, 16> det_vec = det_accum.to_vector<bf16>();
-        //aie::mask<16> det_is_zero = aie::eq(det_vec, bf16(0));
-        //det_vec = aie::select(det_vec, det_min, det_is_zero);
-        
-        det_vec = aie::add(det_vec, aie::mul(vec_cov2D_0_0, bf16(0.3)).to_vector<bf16>());
-        det_vec = aie::add(det_vec, aie::mul(vec_cov2D_1_1, bf16(0.3)).to_vector<bf16>());
-        det_vec = aie::add(det_vec, bf16(0.09));
         vec_cov2D_0_0 = aie::add(vec_cov2D_0_0, bf16(0.3));
         vec_cov2D_1_1 = aie::add(vec_cov2D_1_1, bf16(0.3));
+        aie::accum<accfloat, 16> det_accum = aie::mul(vec_cov2D_0_0, vec_cov2D_1_1);
+        aie::vector<bf16, 16> det_min = aie::mul(det_accum.to_vector<bf16>(), bf16(0.01)).to_vector<bf16>();
+        det_accum = aie::mac(det_accum, vec_cov2D_0_1, vec_cov2D_0_1_minus);
+        aie::vector<bf16, 16> det_vec = det_accum.to_vector<bf16>();
+        aie::mask<16> det_is_zero = aie::le(aie::abs(det_vec), aie::abs(det_min));
+        det_vec = aie::select(det_vec, nan_vec, det_is_zero);
+        
         
         aie::vector<bf16, 16> inv_det_vec = aie::div(aie::broadcast<bf16,16>(bf16(1.0)), det_vec);
 

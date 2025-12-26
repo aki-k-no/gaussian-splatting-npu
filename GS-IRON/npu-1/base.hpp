@@ -3,6 +3,7 @@
 
 #define __USE_NPU
 
+#define __DO_RENDER
 
 #include "xrt/xrt_bo.h"
 #include "xrt/xrt_device.h"
@@ -10,7 +11,6 @@
 
 #include <cstdint>
 #include <stdfloat>
-
 
 using DATATYPE_IN1 = std::bfloat16_t;
 using DATATYPE_IN2 = std::bfloat16_t;

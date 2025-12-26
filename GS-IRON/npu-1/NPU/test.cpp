@@ -246,15 +246,18 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
         for (int iter = 0; iter < TILE_SIZE / 4; iter++){
             for (int i = 0; i < 4; i++) {
                 for(int j=0;j<2;j++){
+                    
                     int offset = tile * TILE_SIZE * 71;
                     DATATYPE_OUT ref = (bufIn1[4 * j + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1 + 18] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[4 * j + 2 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 18] * bufIn2[offset + iter * 32 + i + 12])
                                   / (bufIn1[12 + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 18] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[14 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[15 + 18] * bufIn2[offset + iter * 32 + i + 12]);
                     
+                                  ref = (ref + 1) * 0.5;
+
                     
                     // Combine two bf16 outputs into a single 32-bit float (little endian)
-                    size_t idx = CHUNK_SIZE * 4 + tile * TILE_SIZE * 4 + (iter * 8 + i + j * 4) * 2;
+                    size_t idx = CHUNK_SIZE * 4 + tile * TILE_SIZE * 4 + (iter * 8 + i * 2 + j) * 2;
 
                     uint16_t lo16 = 0, hi16 = 0;
                     memcpy(&lo16, &bufOut[idx], sizeof(uint16_t));
@@ -268,13 +271,13 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
 
                     if (std::isnan(combined) || combined < ref_f - 0.05f || combined > ref_f + 0.05f) {
                         if (verbosity >= 1) {
-                            std::cout << "Error in output (w) " << (tile * TILE_SIZE * 14 + iter * 8 + i + j * 4)
+                            std::cout << "Error in output (w) " << CHUNK_SIZE * 4 + tile * TILE_SIZE * 4 + (iter * 8 + i * 2 + j) * 2
                                 << " : " << combined << " != " << ref_f << std::endl;
                         }
                         errors++;
                     } else {
                         if (verbosity >= 2) {
-                            std::cout << "Correct in output (w) " << (tile * TILE_SIZE * 14 + iter * 8 + i + j * 4)
+                            std::cout << "Correct in output (w) " << CHUNK_SIZE * 4 + tile * TILE_SIZE * 4 + (iter * 8 + i * 2 + j) * 2
                                 << " : " << combined << " == " << ref_f << std::endl;
                         }
                     }
