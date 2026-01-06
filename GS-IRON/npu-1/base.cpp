@@ -96,9 +96,9 @@ void setup_npu(int argc, const char *argv[]){
                           XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
     bo_inA = xrt::bo(device, IN1_SIZE * sizeof(DATATYPE_IN1),
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-    bo_inB = xrt::bo(device, CHUNK_SIZE * 71 * sizeof(DATATYPE_IN2),
+    bo_inB = xrt::bo(device, CHUNK_SIZE * 72 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    bo_outC = xrt::bo(device, CHUNK_SIZE * 16 * sizeof(DATATYPE_OUT),
+    bo_outC = xrt::bo(device, CHUNK_SIZE * 14 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
                             
 
@@ -116,9 +116,9 @@ void setup_npu(int argc, const char *argv[]){
 int cnt = 0;
 inline bool compute_cov2D(GaussianGroup &group, Gaussian3D& g, Camera &cam, std::array<int, 2> &grid, std::vector<Tile> &tiles){
     
-        // Eigen::Vector4f pos_vec;
-        // pos_vec << g.xyz[0], g.xyz[1], g.xyz[2], 1.0f;
-        // g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
+        Eigen::Vector4f pos_vec;
+        pos_vec << g.xyz[0], g.xyz[1], g.xyz[2], 1.0f;
+        g.xyz_view = (cam.world_to_view * pos_vec).head<3>();
         
         Eigen::Matrix3f R;
         // convert quaternion to rotation matrix
@@ -143,15 +143,9 @@ inline bool compute_cov2D(GaussianGroup &group, Gaussian3D& g, Camera &cam, std:
         g.covariance3D = M * M.transpose();
 
         //project to 2D covariance
-        #ifdef __USE_NPU
-        float _x = group.xyz_view_buf[g.index * 4];
-        float _y = group.xyz_view_buf[g.index * 4 + 1];
-        float _z = group.xyz_view_buf[g.index * 4 + 2];
-        #else
         float _x = g.xyz_view[0];
         float _y = g.xyz_view[1];
         float _z = g.xyz_view[2];
-        #endif
         Eigen::Matrix<float, 3, 3> J;
         J << cam.fx / _z, 0.0f, -cam.fx * _x / (_z * _z),
              0.0f, cam.fy / _z, -cam.fy * _y / (_z * _z),
@@ -218,12 +212,12 @@ int omit_count = 0;
 void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DATATYPE_OUT *bufOut, int numGaussians, Camera& cam, std::array<int, 2> &grid){
     // extract the data and save
     memcpy(group.xyz_view_buf.data() + i * CHUNK_SIZE * 4, bufOut, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
-    memcpy(group.color_buf.data() + i * CHUNK_SIZE * 4, bufOut + CHUNK_SIZE * 12, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
-    memcpy(group.cov2d_buf.data() + i * CHUNK_SIZE * 4, bufOut + CHUNK_SIZE * 8, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
+    memcpy(group.color_buf.data() + i * CHUNK_SIZE * 4, bufOut + CHUNK_SIZE * 10, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
+    memcpy(group.cov2d_buf.data() + i * CHUNK_SIZE * 4, bufOut + CHUNK_SIZE * 6, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
         
     
-    int load_idx = CHUNK_SIZE * 4;
-    int load_idx2 = CHUNK_SIZE * 8;
+    int load_idx = CHUNK_SIZE * 0;
+    int load_idx2 = CHUNK_SIZE * 6;
     int gaussian_idx = i * CHUNK_SIZE;
     for(int i = 0; i < CHUNK_SIZE; i++){
         if(gaussian_idx >= numGaussians)
@@ -231,7 +225,10 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
 
         Gaussian3D &g = group.gaussians[gaussian_idx];
         gaussian_idx++;
-        if(group.xyz_view_buf[g.index * 4 + 2] < 0.2f){
+        //group.xyz_view_buf[g.index * 4 + 2] * (1 + 1/512.0f * g.opacity)
+        g.screen_depth_index = get_float_from_pointer(bufOut + CHUNK_SIZE * 4 + i * 2) ; // add opacity for sorting faster
+        
+        if(g.screen_depth_index < 0.2f){
             // dont forget to increment load_idx2
             load_idx2 += 4;
             load_idx += 4;
@@ -248,8 +245,7 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
                        a2, a3;
         load_idx2 += 4;
         load_idx += 4;
-        g.screen_depth_index = group.xyz_view_buf[g.index * 4 + 2] * (1 + 1/512.0f * g.opacity); // add opacity for sorting faster
-        if(std::isnan(a1) || std::isnan(a2) || std::isnan(a3) || g.scale[0] > 0.3f || g.scale[1] > 0.3f || g.scale[2] > 0.3f){
+        if(std::isnan(a1) && g.opacity > 0.03f || g.scale[0] > 0.3f || g.scale[1] > 0.3f || g.scale[2] > 0.3f){
             omit_count++;
             compute_cov2D(group, g, cam, grid, tiles);
             continue;
@@ -280,6 +276,7 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
 
 void render(GaussianGroup &group, Camera &cam, std::string img_name){
     
+    omit_count = 0;
     
 
     auto start = std::chrono::steady_clock::now();
@@ -318,10 +315,10 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     uint32_t tmp = 0;
 
     //double buffering
-    DATATYPE_OUT bufOut2[CHUNK_SIZE * 16];
+    DATATYPE_OUT bufOut2[CHUNK_SIZE * 14];
     
     //copy the data first
-    memcpy(bufInB, group.xyz_buf.data(), CHUNK_SIZE * 71 * sizeof(DATATYPE_IN2));
+    memcpy(bufInB, group.xyz_buf.data(), CHUNK_SIZE * 72 * sizeof(DATATYPE_IN2));
     auto start_npu = std::chrono::steady_clock::now();
     bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         
@@ -333,14 +330,14 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     auto end_npu = std::chrono::steady_clock::now();
     auto diff_npu = std::chrono::duration_cast<std::chrono::microseconds>(end_npu - start_npu);
     tmp += diff_npu.count();
-    memcpy(bufOut2, bufOut, CHUNK_SIZE * 16 * sizeof(DATATYPE_IN2));
+    memcpy(bufOut2, bufOut, CHUNK_SIZE * 14 * sizeof(DATATYPE_IN2));
     
     for(int i=0; i < (numGaussians - 1) / CHUNK_SIZE + 1; i++){
 
         //copy the data unless last
         if(i != (numGaussians - 1) / CHUNK_SIZE){
         start_npu = std::chrono::steady_clock::now();
-        memcpy(bufInB, group.xyz_buf.data() + (i + 1) * CHUNK_SIZE * 71, CHUNK_SIZE * 71 * sizeof(DATATYPE_IN2));
+        memcpy(bufInB, group.xyz_buf.data() + (i + 1) * CHUNK_SIZE * 72, CHUNK_SIZE * 72 * sizeof(DATATYPE_IN2));
         bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         
         run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
@@ -351,7 +348,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         
         // Sync device to host memories unless last
         bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-        memcpy(bufOut2, bufOut, CHUNK_SIZE * 16 * sizeof(DATATYPE_IN2));
+        memcpy(bufOut2, bufOut, CHUNK_SIZE * 14 * sizeof(DATATYPE_IN2));
         end_npu = std::chrono::steady_clock::now();
         diff_npu = std::chrono::duration_cast<std::chrono::microseconds>(end_npu - start_npu);
         tmp += diff_npu.count();

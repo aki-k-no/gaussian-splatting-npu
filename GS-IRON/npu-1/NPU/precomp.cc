@@ -450,9 +450,6 @@ void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
             // load mat
             aie::vector<bf16, 8> mat_loaded = ::aie::load_v<8>(JR);
             JR += 8;
-
-            float test = 3;
-            bf16 testb = test;
             
 
             cov3D_vec[0] = cov3D_loaded[0];
@@ -508,7 +505,8 @@ void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
         aie::vector<bf16, 16> det_min = aie::mul(det_accum.to_vector<bf16>(), bf16(0.01)).to_vector<bf16>();
         det_accum = aie::mac(det_accum, vec_cov2D_0_1, vec_cov2D_0_1_minus);
         aie::vector<bf16, 16> det_vec = det_accum.to_vector<bf16>();
-        aie::mask<16> det_is_zero = aie::le(aie::abs(det_vec), aie::abs(det_min));
+        // if det is near to zero, or negative, set to nan
+        aie::mask<16> det_is_zero = aie::le(det_vec, aie::abs(det_min));
         det_vec = aie::select(det_vec, nan_vec, det_is_zero);
         
         
@@ -703,6 +701,22 @@ void get_color_post(bf16 *restrict xyz_factors, bf16 *restrict gaussians_data, b
 
 }
 
+template<const int GAUSSIAN_SIZE>
+void get_special_index(bf16 *camera_xyz, bf16 *opacity, bf16 *output){
+
+    for(size_t i = 0;i<GAUSSIAN_SIZE / 16;i++){
+        aie::vector<bf16, 64> camera_vec = ::aie::load_v<64>(camera_xyz);
+        camera_xyz += 64;
+        aie::vector<bf16, 16> opacity_vec = ::aie::load_v<16>(opacity);
+        opacity += 16;
+
+        aie::vector<bf16, 16> camera_zs = aie::filter_odd(aie::filter_even(camera_vec));
+        aie::vector<bf16, 32> merged = aie::transpose(aie::concat(opacity_vec, camera_zs), 2, 16);
+        aie::store_v(output, merged);
+        output += 32;
+    }
+}
+
 
 extern "C" {
 
@@ -722,5 +736,7 @@ void f32_get_conv2D_3(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_
 void f32_get_color_pre(bf16 *SH_coeff, bf16 *gaussians_data, bf16 *output) {get_color_pre<TILE_SIZE / CONV3D_TILE_NUM>(SH_coeff, gaussians_data, output);}
 
 void f32_get_color_post(bf16 *xyz_factors, bf16 *gaussians_data, bf16 *output) {get_color_post<TILE_SIZE / CONV3D_TILE_NUM>(xyz_factors, gaussians_data, output);}
+
+void f32_get_special_index(bf16 *camera_xyz, bf16 *opacity, bf16 *output) {get_special_index<TILE_SIZE>(camera_xyz, opacity, output);}
 
 } // extern "C"

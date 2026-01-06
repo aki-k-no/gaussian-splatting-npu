@@ -94,6 +94,18 @@ void compute_2x3_3x3_3x2_mat(DATATYPE_OUT *mat2_3, DATATYPE_OUT *mat3_3, DATATYP
     }
 }
 
+inline float combine_bfloat16(std::bfloat16_t high, std::bfloat16_t low) {
+    uint16_t lo16 = 0, hi16 = 0;
+    memcpy(&lo16, &low, sizeof(uint16_t));
+    memcpy(&hi16, &high, sizeof(uint16_t));
+
+    uint32_t u32 = static_cast<uint32_t>(lo16) | (static_cast<uint32_t>(hi16) << 16);
+    float combined;
+    memcpy(&combined, &u32, sizeof(float));
+    return combined;
+
+}
+
 
 // Functional correctness verifyer
 int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
@@ -104,29 +116,29 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
     //first
     for (int tile = 0; tile < TILE_COUNT; tile++) {
         for (int iter = 0; iter < TILE_SIZE / 4; iter++){
-            int offset = tile * TILE_SIZE * 71;
+            int offset = tile * TILE_SIZE * 72;
             for (int i = 0; i < 4; i++) {
                 
                 
 
-                for(int j=0;j<4;j++){
+                // for(int j=0;j<4;j++){
 
-                    DATATYPE_OUT ref = bufIn1[4 * j] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1] * bufIn2[offset + iter * 32 + i + 4]
-                                  + bufIn1[4 * j + 2] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3] * bufIn2[offset + iter * 32 + i + 12];
-                    DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 4 + iter * 16 + i * 4 + j];
-                    if (test < ref - 0.25 || test > ref + 0.25) {
-                        if (verbosity >= 1){
+                //     DATATYPE_OUT ref = bufIn1[4 * j] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1] * bufIn2[offset + iter * 32 + i + 4]
+                //                   + bufIn1[4 * j + 2] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3] * bufIn2[offset + iter * 32 + i + 12];
+                //     DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 4 + iter * 16 + i * 4 + j];
+                //     if (test < ref - 0.25 || test > ref + 0.25) {
+                //         if (verbosity >= 1){
 
-                            std::cout << "Error in output " << tile * TILE_SIZE * 14 + iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
-                        }
-                        errors++;
+                //             std::cout << "Error in output " << tile * TILE_SIZE * 14 + iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
+                //         }
+                //         errors++;
 
-                    } else {
-                        if (verbosity >= 2)
-                            std::cout << "Correct in output " << tile * TILE_SIZE * 14 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
-                    }
+                //     } else {
+                //         if (verbosity >= 2)
+                //             std::cout << "Correct in output " << tile * TILE_SIZE * 14 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
+                //     }
                     
-                }
+                // }
 
                 
 
@@ -138,6 +150,10 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 
                 DATATYPE_OUT ref_z = bufIn1[8] * bufIn2[offset + iter * 32 + i] + bufIn1[9] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[10] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[11] * bufIn2[offset + iter * 32 + i + 12];
+                DATATYPE_OUT ref_opa = bufIn2[offset + TILE_SIZE * 8 + iter * 4 + i];
+
+                float ref_index = combine_bfloat16(ref_z, ref_opa); // add opacity for sorting faster
+
                 DATATYPE_OUT fx = bufIn1[16];
                 DATATYPE_OUT fy = bufIn1[17];
                 DATATYPE_OUT ref_R1[6];
@@ -167,7 +183,7 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 int sub_tile_id = true_iter / (TILE_SIZE / CONV3D_TILE_NUM);
                 int sub_tile_res = true_iter % (TILE_SIZE / CONV3D_TILE_NUM);
                 
-                int offset2 = tile * TILE_SIZE * 71 + TILE_SIZE * 8 + sub_tile_id * (TILE_SIZE / CONV3D_TILE_NUM) * 7;
+                int offset2 = tile * TILE_SIZE * 72 + TILE_SIZE * 9 + sub_tile_id * (TILE_SIZE / CONV3D_TILE_NUM) * 7;
                 DATATYPE_IN2 w = bufIn2[offset2 + (sub_tile_res / 16) * 64 + (sub_tile_res % 16)];
                 DATATYPE_IN2 x = bufIn2[offset2 + (sub_tile_res / 16) * 64 + (sub_tile_res % 16) + 16];
                 DATATYPE_IN2 y = bufIn2[offset2 + (sub_tile_res / 16) * 64 + (sub_tile_res % 16) + 32];
@@ -222,14 +238,26 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 DATATYPE_OUT radius = std::sqrt(b + sqrt_term) * 3 + 1;
 
                 
-                
-                
+                float test_index = combine_bfloat16(bufOut[CHUNK_SIZE * 4 + (tile * TILE_SIZE + iter * 4 + i) * 2 + 1],
+                                                            bufOut[CHUNK_SIZE * 4 + (tile * TILE_SIZE + iter * 4 + i) * 2]);
+                // check
+                if(test_index < ref_index - 0.25 || test_index > ref_index + 0.25) {
+                    if (verbosity >= 1){
+                        std::cout << ref_index << " " << ref_z << " " << ref_opa << "\n";
+                        std::cout << bufOut[CHUNK_SIZE * 4 + (tile * TILE_SIZE + iter * 4 + i) * 2 + 1] << " " << bufOut[CHUNK_SIZE * 4 + (tile * TILE_SIZE + iter * 4 + i) * 2] << "\n";
+                        std::cout << "Error in output (index) " << CHUNK_SIZE * 4 + (tile * TILE_SIZE + iter * 4 + i) * 2 << " : " << test_index << " != " << ref_index << std::endl;
+                    }
+                    errors++;
+                } else {
+                    if (verbosity >= 2)
+                        std::cout << "Correct in output (index) " << CHUNK_SIZE * 4 + (tile * TILE_SIZE + iter * 4 + i) * 2 << " : " << test_index << " == " << ref_index << std::endl;
+                }
 
                 //check
-                check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 8 + (tile * TILE_SIZE + iter * 4 + i) * 4], inv_cov2D_0_0, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4, 0.25, errors);
-                check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 8 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 1], inv_cov2D_0_1, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1, 0.25, errors);
-                check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 8 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 2], inv_cov2D_1_1, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2, 0.25, errors);
-                check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 8 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 3], radius, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3, 5, errors);
+                check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4], inv_cov2D_0_0, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4, 0.25, errors);
+                check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 1], inv_cov2D_0_1, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1, 0.25, errors);
+                check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 2], inv_cov2D_1_1, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2, 0.25, errors);
+                check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 3], radius, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3, 5, errors);
 
             
         
@@ -237,17 +265,13 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
         }
     }
 
-    std::cout << bufIn1[18] << " " << bufIn1[19] << " " << bufIn1[20] << " " << bufIn1[21] << std::endl;
-    std::cout << bufIn1[22] << " " << bufIn1[23] << " " << bufIn1[24] << " " << bufIn1[25] << std::endl;
-    std::cout << bufIn1[26] << " " << bufIn1[27] << " " << bufIn1[28] << " " << bufIn1[29] << std::endl;
-    std::cout << bufIn1[30] << " " << bufIn1[31] << " " << bufIn1[32] << " " << bufIn1[33] << std::endl;
     //second
     for (int tile = 0; tile < TILE_COUNT; tile++) {
         for (int iter = 0; iter < TILE_SIZE / 4; iter++){
             for (int i = 0; i < 4; i++) {
                 for(int j=0;j<2;j++){
                     
-                    int offset = tile * TILE_SIZE * 71;
+                    int offset = tile * TILE_SIZE * 72;
                     DATATYPE_OUT ref = (bufIn1[4 * j + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1 + 18] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[4 * j + 2 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 18] * bufIn2[offset + iter * 32 + i + 12])
                                   / (bufIn1[12 + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 18] * bufIn2[offset + iter * 32 + i + 4]
@@ -257,15 +281,9 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
 
                     
                     // Combine two bf16 outputs into a single 32-bit float (little endian)
-                    size_t idx = CHUNK_SIZE * 4 + tile * TILE_SIZE * 4 + (iter * 8 + i * 2 + j) * 2;
+                    size_t idx = CHUNK_SIZE * 0 + tile * TILE_SIZE * 4 + (iter * 8 + i * 2 + j) * 2;
 
-                    uint16_t lo16 = 0, hi16 = 0;
-                    memcpy(&lo16, &bufOut[idx], sizeof(uint16_t));
-                    memcpy(&hi16, &bufOut[idx + 1], sizeof(uint16_t));
-
-                    uint32_t u32 = static_cast<uint32_t>(lo16) | (static_cast<uint32_t>(hi16) << 16);
-                    float combined;
-                    memcpy(&combined, &u32, sizeof(float));
+                    float combined = combine_bfloat16(bufOut[idx + 1], bufOut[idx]);
 
                     float ref_f = static_cast<float>(ref);
 
@@ -304,9 +322,9 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
 
         for (int tile = 0; tile < TILE_COUNT; tile++) {
             for (int i = 0; i < TILE_SIZE; i++){
-                int offset = tile * TILE_SIZE * 71 + TILE_SIZE * 15 + i * 56;
+                int offset = tile * TILE_SIZE * 72 + TILE_SIZE * 16 + i * 56;
 
-                int out_offset = CHUNK_SIZE * 12 + (tile * TILE_SIZE + i) * 4;
+                int out_offset = CHUNK_SIZE * 10 + (tile * TILE_SIZE + i) * 4;
 
                 //normalize
                 DATATYPE_IN1 x = bufIn2[offset] - cam_x;
@@ -364,11 +382,11 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
 
 void fill_bufB(DATATYPE_IN2 *bufInB){
     // fill randomly first
-    generate_random_bfloat16(bufInB, CHUNK_SIZE * 71, 0, 3);
+    generate_random_bfloat16(bufInB, CHUNK_SIZE * 72, 0, 3);
 
     // fill some of them with zero (the gaussian padding)
     for (int i=0; i < TILE_COUNT; i++){
-        int offset = TILE_SIZE * i * 71;
+        int offset = TILE_SIZE * i * 72;
         for(int j=0;j<TILE_SIZE / 4; j++){
             for(int k=0;k<16;k++){
                 bufInB[offset + j * 32 + k + 16] = 0;
@@ -407,9 +425,9 @@ int main(int argc, const char *argv[]) {
                           XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
     auto bo_inA = xrt::bo(device, IN1_SIZE * sizeof(DATATYPE_IN1),
                         XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-    auto bo_inB = xrt::bo(device, CHUNK_SIZE * 71 * sizeof(DATATYPE_IN2),
+    auto bo_inB = xrt::bo(device, CHUNK_SIZE * 72 * sizeof(DATATYPE_IN2),
                              XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-    auto bo_outC = xrt::bo(device, CHUNK_SIZE * 16 * sizeof(DATATYPE_OUT),
+    auto bo_outC = xrt::bo(device, CHUNK_SIZE * 14 * sizeof(DATATYPE_OUT),
                          XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
     #ifdef __ENABLE_TRACE
     auto bo_trace = xrt::bo(device, TRACE_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(7));

@@ -85,13 +85,14 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
         int tile_itr = chunk_offset % TILE_SIZE;
         int loop_itr = tile_itr / 4 * 32;
         int loop_res = tile_itr % 4;
-        int loop_id = chunk_id * CHUNK_SIZE * 71 + TILE_SIZE * tile_id * 71 + loop_itr + loop_res;
+        int loop_id = chunk_id * CHUNK_SIZE * 72 + TILE_SIZE * tile_id * 72 + loop_itr + loop_res;
 
         int tile_id2 = tile_itr / (TILE_SIZE / CONV3D_TILE_NUM);
         int tile_itr2 = tile_itr % (TILE_SIZE / CONV3D_TILE_NUM);
-        int rot_id = chunk_id * CHUNK_SIZE * 71 + TILE_SIZE * tile_id * 71 + TILE_SIZE * 8 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + tile_itr2 / 16 * 64 + tile_itr2 % 16;
-        int scale_id = chunk_id * CHUNK_SIZE * 71 + TILE_SIZE * tile_id * 71 + TILE_SIZE * 8 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + tile_itr2 / 16 * 48 + tile_itr2 % 16;
-        int xyz_id_2 = chunk_id * CHUNK_SIZE * 71 + TILE_SIZE * tile_id * 71 + TILE_SIZE * 15 + tile_itr * 56;
+        int opacity_id = chunk_id * CHUNK_SIZE * 72 + TILE_SIZE * tile_id * 72 + TILE_SIZE * 8;
+        int rot_id = chunk_id * CHUNK_SIZE * 72 + TILE_SIZE * tile_id * 72 + TILE_SIZE * 9 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + tile_itr2 / 16 * 64 + tile_itr2 % 16;
+        int scale_id = chunk_id * CHUNK_SIZE * 72 + TILE_SIZE * tile_id * 72 + TILE_SIZE * 9 + tile_id2 * (TILE_SIZE / CONV3D_TILE_NUM) * 7 + (TILE_SIZE / CONV3D_TILE_NUM) * 4 + tile_itr2 / 16 * 48 + tile_itr2 % 16;
+        int xyz_id_2 = chunk_id * CHUNK_SIZE * 72 + TILE_SIZE * tile_id * 72 + TILE_SIZE * 16 + tile_itr * 56;
         int f_rest_id = xyz_id_2 + 8;
         
         #ifdef __USE_NPU
@@ -187,6 +188,10 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
             }else if(propName == "nz"){
                 gaussian.normalxyz[2] = value;
             }else if(propName == "opacity"){
+                #ifdef __USE_NPU
+                group.xyz_buf[opacity_id + i % TILE_SIZE] = float_to_bfloat16(1 / (1 + std::exp(-value))); //sigmoid
+                #else
+                #endif
                 gaussian.opacity = 1 / (1 + std::exp(-value)); //sigmoid
             }else if(propName == "f_dc_0"){
                 #ifdef __USE_NPU

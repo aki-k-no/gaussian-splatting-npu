@@ -29,7 +29,7 @@ import aie.utils.trace as trace_utils
 def precomp(dev):
     xfr_dtype = bfloat16
 
-    trace_size = 2048
+    trace_size = 0 # 2048
 
 
     @device(dev)
@@ -52,6 +52,8 @@ def precomp(dev):
         
         send1_ty = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         gaussian_send_ty = np.ndarray[(8*line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        opacity_send_ty = np.ndarray[(1 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+
 
 
         
@@ -68,7 +70,8 @@ def precomp(dev):
         
         send3_ty = np.ndarray[(56 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         color_data_ty = np.ndarray[(56 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
-        return1_ty = np.ndarray[(6 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
+        return1_ty = np.ndarray[(8 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
+        index_back_ty = np.ndarray[(2 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
 
         return2_ty = np.ndarray[(4 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
 
@@ -78,8 +81,8 @@ def precomp(dev):
 
 
         # this is required for runtime sequence
-        send_ty = np.ndarray[(line_size * 71,), np.dtype[xfr_dtype]]
-        return_ty = np.ndarray[(line_size * 16,), np.dtype[xfr_dtype]]
+        send_ty = np.ndarray[(line_size * 72,), np.dtype[xfr_dtype]]
+        return_ty = np.ndarray[(line_size * 14,), np.dtype[xfr_dtype]]
 
         # AIE Core Function declarations
         w2v_func = external_func(
@@ -96,6 +99,10 @@ def precomp(dev):
 
         getJ_R_func = external_func(
             "f32_get_J_R", inputs=[w2v_ty, gaussian_back1_ty, to_cov2D_ty]
+        )
+
+        index_func = external_func(
+            "f32_get_special_index", inputs=[gaussian_back1_ty, opacity_send_ty, index_back_ty]
         )
 
         conv2D_funcs = [ external_func(
@@ -115,12 +122,15 @@ def precomp(dev):
         MemTile0 = tile(0, 1)
         ShimTile1 = tile(1, 0)
         MemTile1 = tile(1, 1)
+        ShimTile2 = tile(2, 0)
+        MemTile2 = tile(2, 1)
         ShimTile3 = tile(3, 0)
         MemTile3 = tile(3, 1)
         MemTile4 = tile(4, 1)
         ComputeTileV2w = tile(0, 2)
         ComputeTileCamera = tile(0, 3)
         ComputeTileJR = tile(0, 4)
+        ComputeTileIndex = tile(0,5)
         ComputeTileConv3Ds = [tile(1, 2), tile(1,3), tile(1, 4), tile(1,5)]
         ComputeTileConv2Ds = [tile(2, 2), tile(2, 3), tile(2, 4), tile(2, 5)]
         ComputeTileColorsPre = [tile(3, 2), tile(3, 3), tile(3, 4), tile(3, 5)]
@@ -135,9 +145,12 @@ def precomp(dev):
 
         of_send1 = object_fifo("send1", ShimTile0, MemTile0, 2, send1_ty)
         of_gaussian = object_fifo("gaussian", MemTile0, [ComputeTileV2w, ComputeTileCamera], 2, gaussian_send_ty)
-        
+        of_opacity_send = object_fifo("opacity_send", ShimTile2, MemTile2, 2, opacity_send_ty)
+        of_opacity = object_fifo("opacity", MemTile2, ComputeTileIndex, 2, opacity_send_ty)
+        object_fifo_link(of_opacity_send, of_opacity, [], [])
+
         fifo_send1_link_list = [of_gaussian]
-        fifo_send1_offset_list = [0]
+        fifo_send1_offset_list = []
         object_fifo_link(of_send1, fifo_send1_link_list, [], fifo_send1_offset_list)
 
 
@@ -148,11 +161,14 @@ def precomp(dev):
         fifo_send2_offset_list = [(7*line_size // sub_tiles) // conv3D_num * i for i in range(conv3D_num)]
         object_fifo_link(of_send2, fifo_send2_link_list, [], fifo_send2_offset_list)
         
-        of_out1 = object_fifo("out1", ComputeTileV2w, [MemTile0, ComputeTileJR], 2, gaussian_back1_ty)
+        of_out1 = object_fifo("out1", ComputeTileV2w, [ComputeTileJR, ComputeTileIndex], 2, gaussian_back1_ty)
         of_out2 = object_fifo("out2", ComputeTileCamera, MemTile0, 2, gaussian_back2_ty)
-        of_out1_unit = object_fifo("out1_unit",  MemTile0, ShimTile0, 2, gaussian_back1_ty)
+        of_out_index = object_fifo("out_index", ComputeTileIndex, MemTile2, 2, index_back_ty)
+        of_out_index_unit = object_fifo("out_index_unit", MemTile2, ShimTile2, 2, index_back_ty)
+        object_fifo_link(of_out_index, of_out_index_unit, [], [])
+        # of_out1_unit = object_fifo("out1_unit",  MemTile0, ShimTile0, 2, gaussian_back1_ty)
         of_out2_unit = object_fifo("out2_unit",  MemTile0, ShimTile0, 2, gaussian_back2_ty)
-        object_fifo_link(of_out1, of_out1_unit, [], [])
+        # object_fifo_link(of_out1, of_out1_unit, [], [])
         object_fifo_link(of_out2, of_out2_unit, [], [])
 
         of_JR_cov2Ds = object_fifo("to_cov2D", ComputeTileJR, ComputeTileConv2Ds, 2, to_cov2D_ty)
@@ -213,6 +229,18 @@ def precomp(dev):
                     of_out1.release(ObjectFifoPort.Consume, 1)
                     of_JR_cov2Ds.release(ObjectFifoPort.Produce,1)
                 of_w2v.release(ObjectFifoPort.Consume, 1)
+        
+        @core(ComputeTileIndex, "precomp.a")
+        def core_body_index():
+            for _ in range_(0xFFFFFFFF):
+                for _ in range_(sub_tiles):
+                    elemIn1 = of_out1.acquire(ObjectFifoPort.Consume, 1)
+                    elemIn2 = of_opacity.acquire(ObjectFifoPort.Consume, 1)
+                    elemOut = of_out_index.acquire(ObjectFifoPort.Produce, 1)
+                    index_func(elemIn1, elemIn2, elemOut)
+                    of_out1.release(ObjectFifoPort.Consume, 1)
+                    of_opacity.release(ObjectFifoPort.Consume,1)
+                    of_out_index.release(ObjectFifoPort.Produce, 1)
                 
 
                 
@@ -290,28 +318,39 @@ def precomp(dev):
             import_task = shim_dma_single_bd_task(of_essentials, A, sizes=[1, 1, 1, world_to_view_size + get_camera_size + campos_coeff_size])
             gaussian_task = shim_dma_single_bd_task(of_send1, B, 
                 sizes = [1, 1, sub_tiles, 8 * tile_size],
-                strides = [0,0,tile_size * 71,1],
+                strides = [0,0,tile_size * 72,1],
                 offset = 0
+            )
+            opacity_task = shim_dma_single_bd_task(of_opacity_send, B,
+                sizes = [1, 1, sub_tiles, 1 * tile_size],
+                strides = [0,0,tile_size * 72,1],
+                offset = 8 * tile_size
             )
             rot_scale_task = shim_dma_single_bd_task(of_send2, B,
                 sizes = [1, 1, sub_tiles, 7 * tile_size],
-                strides = [0,0,tile_size * 71,1],
-                offset = 8 * tile_size
+                strides = [0,0,tile_size * 72,1],
+                offset = 9 * tile_size
             )
             color_task = shim_dma_single_bd_task(of_color_send_unit, B,
                 sizes = [1, sub_tiles, 7, 8 * tile_size],
-                strides = [0, tile_size * 71, 8 * tile_size,1],
-                offset = 15 * tile_size
+                strides = [0, tile_size * 72, 8 * tile_size,1],
+                offset = 16 * tile_size
             )
-            out1_task = shim_dma_single_bd_task(
-                of_out1_unit, C, issue_token=True,
-                sizes = [1, 1, 1, 4 * line_size],
-                strides = [0, 0, 0, 1],
-                offset = 0
-            )
+            # out1_task = shim_dma_single_bd_task(
+            #     of_out1_unit, C, issue_token=True,
+            #     sizes = [1, 1, 1, 4 * line_size],
+            #     strides = [0, 0, 0, 1],
+            #     offset = 0
+            # )
             out2_task = shim_dma_single_bd_task(
                 of_out2_unit, C, issue_token=True,
                 sizes = [1, 1, 1, 4 * line_size],
+                strides = [0, 0, 0, 1],
+                offset = 0 * line_size
+            )
+            out_index_task = shim_dma_single_bd_task(
+                of_out_index_unit, C, issue_token=True,
+                sizes = [1, 1, 1, 2 * line_size],
                 strides = [0, 0, 0, 1],
                 offset = 4 * line_size
             )
@@ -319,18 +358,18 @@ def precomp(dev):
                 of_out3_unit, C, issue_token=True,
                 sizes = [1, 1, 1, 4 * line_size],
                 strides = [0, 0, 0, 1],
-                offset = 8 * line_size
+                offset = 6 * line_size
             )
             out4_task = shim_dma_single_bd_task(
                 of_color_return_unit, C, issue_token=True,
                 sizes = [1, 1, 1, 4 * line_size],
                 strides = [0, 0, 0, 1],
-                offset = 12 * line_size
+                offset = 10 * line_size
             )
 
-            dma_start_task(import_task, gaussian_task, rot_scale_task, color_task, out1_task, out2_task, out3_task, out4_task)
-            dma_await_task(out1_task, out2_task, out3_task, out4_task)
-            dma_free_task(import_task, gaussian_task, rot_scale_task, color_task)
+            dma_start_task(import_task, gaussian_task, opacity_task, rot_scale_task, color_task, out2_task, out3_task, out4_task, out_index_task)
+            dma_await_task(out2_task, out3_task, out4_task, out_index_task)
+            dma_free_task(import_task, gaussian_task, opacity_task, rot_scale_task, color_task)
             if trace_size > 0:
                 trace_utils.gen_trace_done_aie2(ShimTile3)
     
