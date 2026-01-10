@@ -95,7 +95,18 @@ void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 
 template <const int GAUSSIAN_SIZE>
 void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *restrict output){
     // // load input data
-    
+    bf16* output2 = output;
+
+    float height = 800;
+    float width = 800;
+
+    aie::vector<float, 16> cam_vec = aie::zeros<float, 16>();
+    for(int i=0;i<16;i+=2){
+        cam_vec[i] = width;
+        cam_vec[i +1] = height;
+    }
+
+
     // load input data
     aie::vector<bf16, 16> va = ::aie::load_v<16>(camera_mat);
     aie::vector<bf16, 32> va_padded = aie::zeros<bf16, 32>();
@@ -161,16 +172,27 @@ void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *r
         aie::store_v((float *)output, output_vec);
 
         // store data
-        output += 32;
-         
+        output += 32;    
     }
+
+    output = output2;
+    // multiply image size
+    for (size_t i = 0; i < GAUSSIAN_SIZE / 8; i += 1) {
+        aie::vector<float, 16> output_vec = ::aie::load_v<16>((float *)output);
+        output_vec = aie::mul(output_vec, cam_vec);
+        output_vec = aie::sub(output_vec, 0.5f);
+        aie::store_v((float *)output, output_vec);
+        output += 32;
+    }
+
     return;
 }
+
 
 template <const int GAUSSIAN_SIZE>
 void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
 
-
+    event0();
     bf16 *scales = rotations + GAUSSIAN_SIZE * 4;
 
     AIE_PREPARE_FOR_PIPELINING
@@ -197,96 +219,78 @@ void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
         rot_accum = aie::mac(rot_accum, rot_xs, rot_xs);
         rot_accum = aie::mac(rot_accum, rot_ys, rot_ys);
         rot_accum = aie::mac(rot_accum, rot_zs, rot_zs);
-        rot_accum = aie::sqrt(rot_accum.to_vector<float>());
+        rot_accum = aie::invsqrt(rot_accum.to_vector<float>());
         
         aie::vector<bf16, 16> rot_norm_factor = rot_accum.to_vector<bf16>();
         
         // normalize them with SIMD
-        aie::vector<bf16, 16> rot_normed_ws = aie::div(rot_ws, rot_norm_factor);
-        aie::vector<bf16, 16> rot_normed_xs = aie::div(rot_xs, rot_norm_factor);
-        aie::vector<bf16, 16> rot_normed_ys = aie::div(rot_ys, rot_norm_factor);
-        aie::vector<bf16, 16> rot_normed_zs = aie::div(rot_zs, rot_norm_factor);
+        aie::vector<bf16, 16> rot_normed_ws = aie::mul(rot_ws, rot_norm_factor);
+        aie::vector<bf16, 16> rot_normed_xs = aie::mul(rot_xs, rot_norm_factor);
+        aie::vector<bf16, 16> rot_normed_ys = aie::mul(rot_ys, rot_norm_factor);
+        aie::vector<bf16, 16> rot_normed_zs = aie::mul(rot_zs, rot_norm_factor);
 
         
 
 
         // compute xy, xz, yz, xx, yy, zz etc...
+        aie::vector<bf16, 16> xx = aie::mul(aie::mul(rot_normed_xs, rot_normed_xs).to_vector<bf16>(),bf16(2));
+        aie::vector<bf16, 16> yy = aie::mul(aie::mul(rot_normed_ys, rot_normed_ys).to_vector<bf16>(),bf16(2));
+        aie::vector<bf16, 16> zz = aie::mul(aie::mul(rot_normed_zs, rot_normed_zs).to_vector<bf16>(),bf16(-2));
+        aie::vector<bf16, 16> xy = aie::mul(aie::mul(rot_normed_xs, rot_normed_ys).to_vector<bf16>(),bf16(2));
+        aie::vector<bf16, 16> xz = aie::mul(aie::mul(rot_normed_xs, rot_normed_zs).to_vector<bf16>(),bf16(2));
+        aie::vector<bf16, 16> yz = aie::mul(aie::mul(rot_normed_ys, rot_normed_zs).to_vector<bf16>(),bf16(2));
+        aie::vector<bf16, 16> xw = aie::mul(aie::mul(rot_normed_xs, rot_normed_ws).to_vector<bf16>(),bf16(2));
+        aie::vector<bf16, 16> yw = aie::mul(aie::mul(rot_normed_ys, rot_normed_ws).to_vector<bf16>(),bf16(2));
+        aie::vector<bf16, 16> zw = aie::mul(aie::mul(rot_normed_zs, rot_normed_ws).to_vector<bf16>(),bf16(2));
+
         
         AIE_PREPARE_FOR_PIPELINING
         AIE_LOOP_RANGE(16, 16)
         for(size_t j=0;j<16;j++){
 
-            aie::vector<bf16, 8> compute_vec1(rot_normed_xs[j], rot_normed_xs[j], rot_normed_ws[j], rot_normed_ws[j],
-                                             rot_normed_zs[j], rot_normed_zs[j], rot_normed_ys[j], rot_normed_ys[j]);
-            aie::vector<bf16,8> compute_vec1_trans = aie::transpose(compute_vec1, 4, 2);
-
-            // aie::vector<bf16, 8> compute_vec2(rot_normed_xs[j+1], rot_normed_xs[j+1], rot_normed_ws[j+1], rot_normed_ws[j+1],
-            //                                  rot_normed_zs[j+1], rot_normed_zs[j+1], rot_normed_ys[j+1], rot_normed_ys[j+1]);
-            // aie::vector<bf16,8> compute_vec2_trans = aie::transpose(compute_vec2, 4, 2);
-
-            //concat them
-            aie::vector<bf16, 16> compute_vec_concat = aie::concat(compute_vec1, aie::zeros<bf16,8>());
-            aie::vector<bf16, 16> compute_vec_concat_trans = aie::concat(compute_vec1_trans, aie::zeros<bf16,8>());
-            compute_vec_concat[8] = bf16(-1) * rot_normed_zs[j];
-            compute_vec_concat[9] = rot_normed_xs[j];
-
-            compute_vec_concat_trans[8] = rot_normed_zs[j];
-            compute_vec_concat_trans[9] = rot_normed_ys[j];
-
-            //element-wise mul
-            // order : xx xw wz wy zx zw yz yy 
-            aie::vector<bf16, 16> result_vec = aie::mul(aie::mul(compute_vec_concat, compute_vec_concat_trans).to_vector<bf16>(),bf16(2));
-
-
             // matrix for computation
             aie::vector<bf16, 16> compute_R1_1 = aie::zeros<bf16, 16>();
             compute_R1_1[0] = bf16(1);
-            compute_R1_1[1] = result_vec[9]; // xy
-            compute_R1_1[2] = result_vec[4]; // xz
+            compute_R1_1[1] = xy[j]; // xy
+            compute_R1_1[2] = xz[j]; // xz
 
-            compute_R1_1[4] = result_vec[9]; // xy
+            compute_R1_1[4] = xy[j]; // xy
             compute_R1_1[5] = bf16(1);
-            compute_R1_1[6] = result_vec[6]; // yz
+            compute_R1_1[6] = yz[j]; // yz
 
-            compute_R1_1[8] = result_vec[4]; // xz
-            compute_R1_1[9] = result_vec[6]; // yz
+            compute_R1_1[8] = xz[j]; // xz
+            compute_R1_1[9] = yz[j]; // yz
             compute_R1_1[10] = bf16(1);
             
             //for sub
             aie::vector<bf16, 16> compute_R1_2 = aie::zeros<bf16, 16>();
-            compute_R1_2[0] = result_vec[7]; // -yy
-            compute_R1_2[2] = result_vec[3]; // -yw
+            compute_R1_2[0] = yy[j]; // -yy
+            compute_R1_2[2] = yw[j]; // -yw
+            compute_R1_2[4] = zw[j]; // -zw
+            compute_R1_2[5] = xx[j]; // -xx
 
-            compute_R1_2[4] = result_vec[2]; // -zw
-            compute_R1_2[5] = result_vec[0]; // -xx
-
-            compute_R1_2[9] = result_vec[1]; // -xw
-            compute_R1_2[10] = result_vec[0]; // -xx
+            compute_R1_2[9] = xw[j]; // -xw
+            compute_R1_2[10] = xx[j]; // -xx
 
 
             //for leftover computation
             aie::vector<bf16, 16> compute_R1_3 = aie::zeros<bf16, 16>();
-            compute_R1_3[0] = result_vec[8]; // -zz
-            compute_R1_3[1] = result_vec[2]; // zw
+            compute_R1_3[0] = zz[j]; // -zz
+            compute_R1_3[1] = zw[j]; // zw
 
-            compute_R1_3[5] = result_vec[8]; // -zz
-            compute_R1_3[6] = result_vec[1]; // xw
+            compute_R1_3[5] = zz[j]; // -zz
+            compute_R1_3[6] = xw[j]; // xw
 
-            compute_R1_3[8] = result_vec[3]; // yw
-            compute_R1_3[10] = result_vec[7] * -1; // -1 * yy
+            compute_R1_3[8] = yw[j]; // yw
+            compute_R1_3[10] = yy[j] * -1; // -1 * yy
 
             aie::vector<bf16, 16> R1 = aie::add(aie::sub(compute_R1_1, compute_R1_2), compute_R1_3);
             //add scale
-            aie::vector<bf16, 16> scale = aie::zeros<bf16, 16>();
-            scale[0] = scale_1[j];
-            scale[1] = scale_1[j];
-            scale[2] = scale_1[j];
+            aie::vector<bf16, 16> scale = aie::concat(aie::broadcast<bf16, 8>(scale_1[j]), aie::broadcast<bf16, 8>(scale_3[j]));
+            
             scale[4] = scale_2[j];
             scale[5] = scale_2[j];
             scale[6] = scale_2[j];
-            scale[8] = scale_3[j]; 
-            scale[9] = scale_3[j];
-            scale[10] = scale_3[j];
             R1 = aie::mul(R1, scale);
 
             aie::vector<bf16, 32> R1_padded = aie::concat(R1, aie::zeros<bf16, 16>());
@@ -299,20 +303,19 @@ void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
             aie::vector<bf16, 16> output1 = mmul1.to_vector<bf16>();
 
             // we only need 6 of matrix
-            output[0] = output1[0];
-            output[1] = output1[1];
-            output[2] = output1[2];
-            output[3] = output1[5];
-            output[4] = output1[6];
-            output[5] = output1[10];
+            aie::store_unaligned_v(output, output1);
         
-            output += 8;
+            output += 16;
 
 
         }
         
     }
+    event1();
+    
 }
+
+
 
 template <const int GAUSSIAN_SIZE>
 void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict output){
@@ -431,6 +434,7 @@ void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict out
 template <const int GAUSSIAN_SIZE, const int index>
 void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
     
+    event0();
     JR = JR + index * GAUSSIAN_SIZE / 4 * 8;
     aie::vector<bf16, 16> nan_vec = aie::broadcast<bf16,16>(aie::sqrt(bf16(-1)));
     for(size_t i = 0; i < GAUSSIAN_SIZE / 64; i++){
@@ -440,28 +444,14 @@ void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
         aie::vector<bf16, 16> vec_cov2D_1_1 = aie::zeros<bf16,16>();
         for(size_t j = 0; j < 16; j++){
 
-            // we want to load as 6 elements, but aie load only support 4/8/16/etc...
-            aie::vector<bf16, 8> cov3D_loaded = aie::load_v<8>(cov3D);
-
-        
             // load cov3D and put into vector
-            aie::vector<bf16, 16> cov3D_vec = aie::zeros<bf16,16>();
+            aie::vector<bf16, 16> cov3D_vec = aie::load_v<16>(cov3D);
 
             // load mat
             aie::vector<bf16, 8> mat_loaded = ::aie::load_v<8>(JR);
             JR += 8;
-            
-
-            cov3D_vec[0] = cov3D_loaded[0];
-            cov3D_vec[1] = cov3D_loaded[1];
-            cov3D_vec[2] = cov3D_loaded[2];
-            cov3D_vec[4] = cov3D_loaded[1];
-            cov3D_vec[5] = cov3D_loaded[3];
-            cov3D_vec[6] = cov3D_loaded[4];
-            cov3D_vec[8] = cov3D_loaded[2];
-            cov3D_vec[9] = cov3D_loaded[4];
-            cov3D_vec[10] = cov3D_loaded[5];
-            cov3D += 8;
+        
+            cov3D += 16;
 
             //copy it
             aie::vector<bf16, 8> mat_loaded2 = mat_loaded;
@@ -530,7 +520,68 @@ void get_conv2D(bf16 *restrict JR, bf16 *restrict cov3D, bf16 *restrict output){
         output += 64;
 
     }
+    event1();
     return;
+}
+
+template<const int GAUSSIAN_SIZE>
+void get_dir(bf16 *restrict coeff_data, bf16 *restrict gaussians_data, bf16 *restrict output){
+
+    // load essential variables
+    aie::vector<bf16, 8> camera_data = aie::load_v<8>(coeff_data + 16);
+    bf16 cam_x = camera_data[0];
+    bf16 cam_y = camera_data[1];
+    bf16 cam_z = camera_data[2];
+    aie::vector<bf16, 8> zeros = aie::zeros<bf16, 8>();
+
+    
+    AIE_PREPARE_FOR_PIPELINING
+    AIE_LOOP_RANGE(GAUSSIAN_SIZE / 16, GAUSSIAN_SIZE / 16)
+    for(size_t i = 0;i<GAUSSIAN_SIZE / 16;i++){
+        
+        event0();
+        // compute dif vector
+        aie::vector<bf16, 64> gaussian_xyz = aie::load_v<64>(gaussians_data);
+        
+        gaussians_data += 64;
+        aie::vector<bf16, 16> gaussian_x = aie::filter_even(aie::filter_even(gaussian_xyz));
+        aie::vector<bf16, 16> gaussian_y = aie::filter_odd(aie::filter_even(gaussian_xyz));
+        aie::vector<bf16, 16> gaussian_z = aie::filter_even(aie::filter_odd(gaussian_xyz));
+        aie::vector<bf16, 16> diff_x = aie::sub(gaussian_x, cam_x);
+        aie::vector<bf16, 16> diff_y = aie::sub(gaussian_y, cam_y);
+        aie::vector<bf16, 16> diff_z = aie::sub(gaussian_z, cam_z);
+        
+        aie::accum<accfloat, 16> diff_length = aie::mul(diff_x, diff_x);
+        diff_length = aie::mac(diff_length, diff_y, diff_y);
+        diff_length = aie::mac(diff_length, diff_z, diff_z);
+        diff_length = aie::invsqrt(diff_length.to_vector<float>());
+
+        diff_x = aie::mul(diff_x, diff_length.to_vector<bf16>());
+        diff_y = aie::mul(diff_y, diff_length.to_vector<bf16>());
+        diff_z = aie::mul(diff_z, diff_length.to_vector<bf16>());
+
+        aie::vector<bf16, 16> xx = aie::mul(diff_x, diff_x);
+        aie::vector<bf16, 16> yy = aie::mul(diff_y, diff_y);
+        aie::vector<bf16, 16> zz = aie::mul(diff_z, diff_z);
+        aie::vector<bf16, 16> xy = aie::mul(diff_x, diff_y);
+        aie::vector<bf16, 16> xz = aie::mul(diff_x, diff_z);
+        aie::vector<bf16, 16> yz = aie::mul(diff_y, diff_z);
+        // aie::vector<bf16, 16> xx_plus_yy = aie::add(xx, yy);
+        // aie::vector<bf16, 16> xx_minus_yy = aie::sub(xx, yy);
+        // aie::vector<bf16, 16> zz2 = aie::mul(zz, bf16(2));
+        // aie::vector<bf16, 16> zz4 = aie::mul(zz, bf16(4));
+
+        aie::store_v(output, diff_x);
+        aie::store_v(output + 16, diff_y);
+        aie::store_v(output + 32, diff_z);
+        aie::store_v(output + 48, xx);
+        aie::store_v(output + 64, yy);
+        aie::store_v(output + 80, zz);
+        aie::store_v(output + 96, xy);
+        aie::store_v(output + 112, xz);
+        aie::store_v(output + 128, yz);
+        output += 144;
+    }
 }
 
 
@@ -738,5 +789,7 @@ void f32_get_color_pre(bf16 *SH_coeff, bf16 *gaussians_data, bf16 *output) {get_
 void f32_get_color_post(bf16 *xyz_factors, bf16 *gaussians_data, bf16 *output) {get_color_post<TILE_SIZE / CONV3D_TILE_NUM>(xyz_factors, gaussians_data, output);}
 
 void f32_get_special_index(bf16 *camera_xyz, bf16 *opacity, bf16 *output) {get_special_index<TILE_SIZE>(camera_xyz, opacity, output);}
+
+void f32_get_dir(bf16 *coeff_data, bf16 *gaussians_data, bf16 *output) {get_dir<TILE_SIZE / CONV3D_TILE_NUM>(coeff_data, gaussians_data, output);}
 
 } // extern "C"

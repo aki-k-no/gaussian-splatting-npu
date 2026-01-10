@@ -24,7 +24,7 @@ const float SH_C3[] = {
 	-0.5900435899266435f
 };
 
-const int IN1_SIZE = 18 + 16 + 24;
+const int IN1_SIZE = 18 + 20 + 24;
 const int CHUNK_SIZE = 128 * 256;
 const int TILE_SIZE = 128;
 const int TILE_COUNT = CHUNK_SIZE / TILE_SIZE;

@@ -41,14 +41,14 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C, float fovX){
     }
     bufInA[16] = cam.fx;
     bufInA[17] = cam.fy;
-    bufInA[50] = cam.pos[0];
-    bufInA[51] = cam.pos[1];
-    bufInA[52] = cam.pos[2];
-    bufInA[53] = 0;
-    bufInA[54] = 0;
-    bufInA[55] = 0;
-    bufInA[56] = 0;
+    bufInA[54] = cam.pos[0];
+    bufInA[55] = cam.pos[1];
+    bufInA[56] = cam.pos[2];
     bufInA[57] = 0;
+    bufInA[58] = 0;
+    bufInA[59] = 0;
+    bufInA[60] = 0;
+    bufInA[61] = 0;
     #endif
     
 }

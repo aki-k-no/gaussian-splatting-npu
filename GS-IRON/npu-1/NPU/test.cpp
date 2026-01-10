@@ -219,8 +219,9 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
 
                 DATATYPE_OUT cov3D_mat[9];
 
+                
                 compute_3x3_mat(calc_mat, cov3D_mat);
-
+                
 
 
                 DATATYPE_OUT ref_mat[4];
@@ -254,11 +255,15 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 }
 
                 //check
+                // for(int k = 0;k<16;k++){
+                    
+                //     std::cout << "output data " << bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4 + k] << " ";
+                // }
                 check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4], inv_cov2D_0_0, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4, 0.25, errors);
                 check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 1], inv_cov2D_0_1, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 1, 0.25, errors);
                 check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 2], inv_cov2D_1_1, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 2, 0.25, errors);
                 check_each("cov2D", verbosity, bufOut[CHUNK_SIZE * 6 + (tile * TILE_SIZE + iter * 4 + i) * 4 + 3], radius, tile * TILE_SIZE * 14 + TILE_SIZE * 6 + (iter * 4 + i) * 4 + 3, 5, errors);
-
+                
             
         
             }
@@ -272,12 +277,12 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 for(int j=0;j<2;j++){
                     
                     int offset = tile * TILE_SIZE * 72;
-                    DATATYPE_OUT ref = (bufIn1[4 * j + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1 + 18] * bufIn2[offset + iter * 32 + i + 4]
+                    float ref = (bufIn1[4 * j + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1 + 18] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[4 * j + 2 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 18] * bufIn2[offset + iter * 32 + i + 12])
                                   / (bufIn1[12 + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 18] * bufIn2[offset + iter * 32 + i + 4]
                                   + bufIn1[14 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[15 + 18] * bufIn2[offset + iter * 32 + i + 12]);
                     
-                                  ref = (ref + 1) * 0.5;
+                                  ref = (ref + 1) * 0.5 * 800.f - 0.5f;
 
                     
                     // Combine two bf16 outputs into a single 32-bit float (little endian)
@@ -310,14 +315,14 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
     {
         DATATYPE_IN1 sh[16];
         for(int i=0;i<16;i++){
-            sh[i] = bufIn1[34 + i];
+            sh[i] = bufIn1[38 + i];
         }
         DATATYPE_IN1 cam_x;
         DATATYPE_IN1 cam_y;
         DATATYPE_IN1 cam_z;
-        cam_x = bufIn1[50];
-        cam_y = bufIn1[51];
-        cam_z = bufIn1[52];
+        cam_x = bufIn1[54];
+        cam_y = bufIn1[55];
+        cam_z = bufIn1[56];
 
 
         for (int tile = 0; tile < TILE_COUNT; tile++) {
@@ -446,24 +451,24 @@ int main(int argc, const char *argv[]) {
     DATATYPE_IN1 *bufInA = bo_inA.map<DATATYPE_IN1 *>();
     
     generate_random_bfloat16(bufInA, IN1_SIZE, 0, 3);
-    bufInA[34] = 0.28209479177387814f;
+    bufInA[38] = 0.28209479177387814f;
 
-    bufInA[35] = 0.4886025119029199f;
-    bufInA[36] = 0.4886025119029199f;
-    bufInA[37] = 0.4886025119029199f;
+    bufInA[39] = 0.4886025119029199f;
+    bufInA[40] = 0.4886025119029199f;
+    bufInA[41] = 0.4886025119029199f;
 
-    bufInA[38] = 1.0925484305920792f;
-    bufInA[39] = -1.0925484305920792f;
-    bufInA[40] = 0.31539156525252005f;
-    bufInA[41] = -1.0925484305920792f;
-    bufInA[42] = 0.5462742152960396f;
-    bufInA[43] = -0.5900435899266435f;
-    bufInA[44] = 2.890611442640554f;
-    bufInA[45] = -0.4570457994644658f;
-    bufInA[46] = 0.3731763325901154f;
-    bufInA[47] = -0.4570457994644658f;
-    bufInA[48] = 1.445305721320277f;
-    bufInA[49] = -0.5900435899266435f;
+    bufInA[42] = 1.0925484305920792f;
+    bufInA[43] = -1.0925484305920792f;
+    bufInA[44] = 0.31539156525252005f;
+    bufInA[45] = -1.0925484305920792f;
+    bufInA[46] = 0.5462742152960396f;
+    bufInA[47] = -0.5900435899266435f;
+    bufInA[48] = 2.890611442640554f;
+    bufInA[49] = -0.4570457994644658f;
+    bufInA[50] = 0.3731763325901154f;
+    bufInA[51] = -0.4570457994644658f;
+    bufInA[52] = 1.445305721320277f;
+    bufInA[53] = -0.5900435899266435f;
     
 
     // Initialize buffer bo_inFactor

@@ -29,7 +29,7 @@ import aie.utils.trace as trace_utils
 def precomp(dev):
     xfr_dtype = bfloat16
 
-    trace_size = 0 # 2048
+    trace_size = 2048
 
 
     @device(dev)
@@ -40,7 +40,7 @@ def precomp(dev):
         tile_size = 128
         sub_tiles = line_size // tile_size
         world_to_view_size = 4 * 4 + 2
-        get_camera_size = 4 * 4
+        get_camera_size = 4 * 4 + 4
         campos_coeff_size = 8 + 4 * 4
         conv3D_num = 4
 
@@ -62,14 +62,17 @@ def precomp(dev):
         gaussian_back1_ty = np.ndarray[(4*line_size // sub_tiles,), np.dtype[xfr_dtype]]
         to_cov2D_ty = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         gaussian_back2_ty = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
-        conv3D_return_ty = np.ndarray[(8 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
-        conv3D_return_ty_accum = np.ndarray[(8 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        conv3D_return_ty = np.ndarray[(16 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        conv3D_return_ty_accum = np.ndarray[(16 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         cov2D_return_ty = np.ndarray[(4 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         cov2D_return_accum_ty = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
 
         
         send3_ty = np.ndarray[(56 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         color_data_ty = np.ndarray[(56 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        pos_data_ty_accum = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        pos_data_ty = np.ndarray[(4 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        dir_ty = np.ndarray[(9 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         return1_ty = np.ndarray[(8 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
         index_back_ty = np.ndarray[(2 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
 
@@ -117,6 +120,10 @@ def precomp(dev):
             "f32_get_color_post", inputs=[color_inter_ty, color_data_ty, color_return_ty]
         )
 
+        dir_func = external_func(
+            "f32_get_dir", inputs=[campos_coeff_ty, pos_data_ty, dir_ty]
+        )
+
         # Tile declarations
         ShimTile0 = tile(0, 0)
         MemTile0 = tile(0, 1)
@@ -126,15 +133,18 @@ def precomp(dev):
         MemTile2 = tile(2, 1)
         ShimTile3 = tile(3, 0)
         MemTile3 = tile(3, 1)
+        ShimTile4 = tile(4, 0)
         MemTile4 = tile(4, 1)
+        MemTile5 = tile(5, 1)
         ComputeTileV2w = tile(0, 2)
         ComputeTileCamera = tile(0, 3)
         ComputeTileJR = tile(0, 4)
         ComputeTileIndex = tile(0,5)
         ComputeTileConv3Ds = [tile(1, 2), tile(1,3), tile(1, 4), tile(1,5)]
         ComputeTileConv2Ds = [tile(2, 2), tile(2, 3), tile(2, 4), tile(2, 5)]
-        ComputeTileColorsPre = [tile(3, 2), tile(3, 3), tile(3, 4), tile(3, 5)]
-        ComputeTileColorsPost = [tile(4, 2), tile(4, 3), tile(4, 4), tile(4, 5)]
+        ComputeTTileDirs = [tile(3, 2), tile(3, 3), tile(3, 4), tile(3, 5)]
+        ComputeTileColorsPre = [tile(4, 2), tile(4, 3), tile(4, 4), tile(4, 5)]
+        ComputeTileColorsPost = [tile(5, 2), tile(5, 3), tile(5, 4), tile(5, 5)]
 
         # AIE-array data movement with object fifos
         of_essentials = object_fifo("essentials", ShimTile0, MemTile0, 2, essentials_ty)
@@ -166,9 +176,7 @@ def precomp(dev):
         of_out_index = object_fifo("out_index", ComputeTileIndex, MemTile2, 2, index_back_ty)
         of_out_index_unit = object_fifo("out_index_unit", MemTile2, ShimTile2, 2, index_back_ty)
         object_fifo_link(of_out_index, of_out_index_unit, [], [])
-        # of_out1_unit = object_fifo("out1_unit",  MemTile0, ShimTile0, 2, gaussian_back1_ty)
         of_out2_unit = object_fifo("out2_unit",  MemTile0, ShimTile0, 2, gaussian_back2_ty)
-        # object_fifo_link(of_out1, of_out1_unit, [], [])
         object_fifo_link(of_out2, of_out2_unit, [], [])
 
         of_JR_cov2Ds = object_fifo("to_cov2D", ComputeTileJR, ComputeTileConv2Ds, 2, to_cov2D_ty)
@@ -179,14 +187,21 @@ def precomp(dev):
         of_cov2D_returns = [object_fifo("cov2D_return_" + str(i), ComputeTileConv2Ds[i], MemTile1, 2, cov2D_return_ty) for i in range(conv3D_num)]
         object_fifo_link(of_cov2D_returns, of_out3_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
 
+        # of_coeff_dir = object_fifo("coeff_dir_unit", ShimTile3, MemTile3, 2, campos_coeff_ty)
+        # of_dir_send = [object_fifo("coeff_dir_" + str(i), MemTile3, ComputeTTileDirs[i], 2, campos_coeff_ty) for i in range(conv3D_num)]
+        # object_fifo_link(of_coeff_dir, of_dir_send, [], [4 * line_size // sub_tiles * i for i in range(conv3D_num)])
+
+        # of_dir_returns = [object_fifo("dir_return_" + str(i), ComputeTTileDirs[i], MemTile3, 2, dir_ty) for i in range(conv3D_num)]
+
+
         of_color_inters = [object_fifo("color_inter_" + str(i), ComputeTileColorsPre[i], ComputeTileColorsPost[i], 2, color_inter_ty) for i in range(conv3D_num)]
 
-        of_color_return_unit = object_fifo("color_return_unit",  MemTile4, ShimTile3, 2, return3_ty)
-        of_color_returns = [object_fifo("color_return_" + str(i), ComputeTileColorsPost[i], MemTile4, 2, color_return_ty) for i in range(conv3D_num)]
+        of_color_return_unit = object_fifo("color_return_unit",  MemTile5, ShimTile4, 2, return3_ty)
+        of_color_returns = [object_fifo("color_return_" + str(i), ComputeTileColorsPost[i], MemTile5, 2, color_return_ty) for i in range(conv3D_num)]
         object_fifo_link(of_color_returns, of_color_return_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
         
-        of_color_send_unit = object_fifo("color_send_unit", ShimTile3, MemTile3, 2, send3_ty)
-        of_color_sends = [object_fifo("color_send_" + str(i), MemTile3, [ComputeTileColorsPre[i], ComputeTileColorsPost[i]], 2, color_data_ty) for i in range(conv3D_num)]
+        of_color_send_unit = object_fifo("color_send_unit", ShimTile4, MemTile4, 2, send3_ty)
+        of_color_sends = [object_fifo("color_send_" + str(i), MemTile4, [ComputeTileColorsPre[i], ComputeTileColorsPost[i]], 2, color_data_ty) for i in range(conv3D_num)]
         object_fifo_link(of_color_send_unit, of_color_sends, [], [56 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)])
 
 
@@ -301,9 +316,7 @@ def precomp(dev):
 
 
 
-        tiles_to_trace = [ComputeTileColorsPre[0], ShimTile3]
-        if trace_size > 0:
-            trace_utils.configure_packet_tracing_flow(tiles_to_trace, ShimTile3)
+        tiles_to_trace = [ComputeTileConv3Ds[2],ComputeTileConv2Ds[2], ShimTile3]
 
 
         # To/from AIE-array data movement
@@ -372,6 +385,10 @@ def precomp(dev):
             dma_free_task(import_task, gaussian_task, opacity_task, rot_scale_task, color_task)
             if trace_size > 0:
                 trace_utils.gen_trace_done_aie2(ShimTile3)
+    
+    
+        if trace_size > 0:
+            trace_utils.configure_packet_tracing_flow(tiles_to_trace, ShimTile3)
     
 
 

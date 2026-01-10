@@ -26,6 +26,19 @@ inline float round_to_bfloat16(float f) {
     x &= 0xFFFF0000u;                             // zero out the lower 16 bits
     return std::bit_cast<float>(x);
 }
+
+inline float combine_bfloat16(std::bfloat16_t high, std::bfloat16_t low) {
+    uint16_t lo16 = 0, hi16 = 0;
+    memcpy(&lo16, &low, sizeof(uint16_t));
+    memcpy(&hi16, &high, sizeof(uint16_t));
+
+    uint32_t u32 = static_cast<uint32_t>(lo16) | (static_cast<uint32_t>(hi16) << 16);
+    float combined;
+    memcpy(&combined, &u32, sizeof(float));
+    return combined;
+
+}
+
 inline std::bfloat16_t float_to_bfloat16(float f) {
     return static_cast<std::bfloat16_t>(round_to_bfloat16(f));
 }

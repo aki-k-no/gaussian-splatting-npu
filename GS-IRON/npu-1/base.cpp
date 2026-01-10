@@ -235,8 +235,8 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
             continue;
         }
         
-        g.screen_coord[0] = get_float_from_pointer(bufOut + load_idx) * cam.width - 0.5;
-        g.screen_coord[1] = get_float_from_pointer(bufOut + load_idx + 2) * cam.height - 0.5;
+        g.screen_coord[0] = get_float_from_pointer(bufOut + load_idx);
+        g.screen_coord[1] = get_float_from_pointer(bufOut + load_idx + 2);
                     
         float a1 = bfloat16_to_float(bufOut[load_idx2]);
         float a2 = bfloat16_to_float(bufOut[load_idx2 + 1]);
@@ -477,6 +477,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                     
                     for(Gaussian3D* g_ptr : tile.sorted_gaussians){
                         Gaussian3D &g = *g_ptr;
+
                         // compute contribution to pixel
                         Eigen::Vector2f diff;
                         //difference to the center of gaussian
