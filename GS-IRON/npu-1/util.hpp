@@ -74,7 +74,7 @@ inline void setup_camera(Camera& cam){
     cam.world_to_view(3,2) = 0.f;
 
     Eigen::Matrix4f proj_mat;
-    proj_mat = getProjMat(100,0.01,0.69,0.69);
+    proj_mat = getProjMat(100,0.01,cam.fovX,cam.fovY);
 
     cam.full_proj = proj_mat * cam.world_to_view;
     cam.pos = cam.world_to_view.transpose().inverse().block<1,3>(3,0);
@@ -93,5 +93,18 @@ inline Eigen::Matrix3f qvec2rotmat(const Eigen::Vector4f& qvec) {
     R(2, 2) = 1 - 2 * qvec[1] * qvec[1] - 2 * qvec[2] * qvec[2];
     return R;
 }
+
+inline void set_float_into_two_bfloat(float f, std::bfloat16_t* ptr){
+    uint32_t u32;
+    memcpy(&u32, &f, sizeof(float));
+    uint16_t hi16 = static_cast<uint16_t>(u32 >> 16);
+    uint16_t lo16 = static_cast<uint16_t>(u32 & 0xFFFF);
+    std::bfloat16_t high, low;
+    memcpy(&high, &hi16, sizeof(uint16_t));
+    memcpy(&low, &lo16, sizeof(uint16_t));
+    ptr[1] = high;
+    ptr[0] = low;
+}
+
 
 #endif // UTIL_H

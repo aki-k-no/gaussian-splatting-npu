@@ -146,6 +146,9 @@ inline bool compute_cov2D(GaussianGroup &group, Gaussian3D& g, Camera &cam, std:
         float _x = g.xyz_view[0];
         float _y = g.xyz_view[1];
         float _z = g.xyz_view[2];
+
+        _x = std::min(1.3f * cam.tan_fovX, std::max(-1.3f * cam.tan_fovX, _x / _z)) * _z;
+        _y = std::min(1.3f * cam.tan_fovY, std::max(-1.3f * cam.tan_fovY, _y / _z)) * _z;
         Eigen::Matrix<float, 3, 3> J;
         J << cam.fx / _z, 0.0f, -cam.fx * _x / (_z * _z),
              0.0f, cam.fy / _z, -cam.fy * _y / (_z * _z),
@@ -165,6 +168,10 @@ inline bool compute_cov2D(GaussianGroup &group, Gaussian3D& g, Camera &cam, std:
         
 
         float det = det_cov_plus_h_cov;
+
+        if(det == 0){
+            return false;
+        }
         float det_inv = 1.f / det;
         
         // we use this afterwards
@@ -179,6 +186,9 @@ inline bool compute_cov2D(GaussianGroup &group, Gaussian3D& g, Camera &cam, std:
 	    float lambda1 = b + std::sqrt(std::max(0.1f, b * b - det));
 	    //float lambda2 = b - std::sqrt(std::max(0.1f, b * b - det));
         g.radius = std::ceil(3.f * std::sqrt(lambda1));
+
+
+
         
         // get related tiles
         std::array<int, 2> rect_min;
@@ -186,6 +196,11 @@ inline bool compute_cov2D(GaussianGroup &group, Gaussian3D& g, Camera &cam, std:
         getRelatedTiles(g.screen_coord, g.radius, rect_min, rect_max, grid);
         if ((rect_max[0] - rect_min[0]) * (rect_max[1] - rect_min[1]) == 0)
 		    return false; // Gaussian does not contribute to the image, skip
+
+        
+        
+        
+        
 
         // put them into tiles
         for(int tx=rect_min[0];tx<rect_max[0];tx++){
@@ -214,7 +229,7 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
     memcpy(group.xyz_view_buf.data() + i * CHUNK_SIZE * 4, bufOut, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
     memcpy(group.color_buf.data() + i * CHUNK_SIZE * 4, bufOut + CHUNK_SIZE * 10, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
     memcpy(group.cov2d_buf.data() + i * CHUNK_SIZE * 4, bufOut + CHUNK_SIZE * 6, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
-        
+    
     
     int load_idx = CHUNK_SIZE * 0;
     int load_idx2 = CHUNK_SIZE * 6;
@@ -228,6 +243,7 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
         //group.xyz_view_buf[g.index * 4 + 2] * (1 + 1/512.0f * g.opacity)
         g.screen_depth_index = get_float_from_pointer(bufOut + CHUNK_SIZE * 4 + i * 2) ; // add opacity for sorting faster
         
+            
         if(g.screen_depth_index < 0.2f){
             // dont forget to increment load_idx2
             load_idx2 += 4;
@@ -237,6 +253,11 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
         
         g.screen_coord[0] = get_float_from_pointer(bufOut + load_idx);
         g.screen_coord[1] = get_float_from_pointer(bufOut + load_idx + 2);
+
+        if(g.index == 266399){
+            std::cout << g.screen_coord[0] << ", " << g.screen_coord[1] << ", depth: " << g.screen_depth_index << std::endl;
+        }
+
                     
         float a1 = bfloat16_to_float(bufOut[load_idx2]);
         float a2 = bfloat16_to_float(bufOut[load_idx2 + 1]);
@@ -261,7 +282,6 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
         if ((rect_max[0] - rect_min[0]) * (rect_max[1] - rect_min[1]) == 0)
 	        continue; // Gaussian does not contribute to the image, skip
 
-        
         // put them into tiles
         for(int tx=rect_min[0] * grid[1];tx<rect_max[0] * grid[1];tx+=grid[1]){
             for(int ty=rect_min[1];ty<rect_max[1];ty++){
@@ -287,7 +307,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
 
     
     // determine grid size    
-    std::array<int, 2> grid = {cam.width / GRID_SIZE_X, cam.height / GRID_SIZE_Y};
+    std::array<int, 2> grid = {(cam.width + GRID_SIZE_X - 1) / GRID_SIZE_X, (cam.height + GRID_SIZE_Y - 1) / GRID_SIZE_Y};
     
     // declear tiles
     std::vector<Tile> tiles;
@@ -319,6 +339,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     
     //copy the data first
     memcpy(bufInB, group.xyz_buf.data(), CHUNK_SIZE * 72 * sizeof(DATATYPE_IN2));
+            
     auto start_npu = std::chrono::steady_clock::now();
     bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         
@@ -333,11 +354,12 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     memcpy(bufOut2, bufOut, CHUNK_SIZE * 14 * sizeof(DATATYPE_IN2));
     
     for(int i=0; i < (numGaussians - 1) / CHUNK_SIZE + 1; i++){
-
+        
         //copy the data unless last
         if(i != (numGaussians - 1) / CHUNK_SIZE){
         start_npu = std::chrono::steady_clock::now();
         memcpy(bufInB, group.xyz_buf.data() + (i + 1) * CHUNK_SIZE * 72, CHUNK_SIZE * 72 * sizeof(DATATYPE_IN2));
+        
         bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         
         run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
@@ -377,6 +399,8 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
 
         g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
         g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
+
+        
         
     }
 
@@ -391,8 +415,9 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         }
 
         bool isSafe = compute_cov2D(group, g, cam, grid, tiles);
-        if(!isSafe)
+        if(!isSafe){
             continue;
+        }
 	
         Eigen::Vector3f colors;
         colors << 0.5f, 0.5f, 0.5f;
@@ -428,9 +453,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             colors[i] = std::max(0.0f, colors[i]);
         }
         g.color = colors;
-        
     }
-    std::cout << "Ill-conditioned gaussians: " << cnt << " / " << numGaussians << std::endl;
     #endif
     
     std::cout << "omit count due to small depth: " << omit_count << std::endl;
@@ -444,6 +467,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     for(int tx=0;tx<grid[0];tx++){
         for(int ty=0;ty<grid[1];ty++){
             Tile &tile = tiles.at(tx * grid[1] + ty);
+            
             if(tile.unsorted_gaussians.size() == 0)
                 continue;
             std::sort(tile.unsorted_gaussians.begin(), tile.unsorted_gaussians.end(),
@@ -492,10 +516,15 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                         }
                         float weight = std::exp(exponent); 
                         float alpha = std::min(0.99f, g.opacity * weight);
+
+
                         
-            			if (alpha < 1.0f / 255.0f)
+            			if (alpha < 1.0f / 255.0f || std::isinf(weight))
 			            	continue;
                         
+                        
+
+
                         #ifdef __USE_NPU
                         int idx = g.index * 4;
                         float true_opacity = pixel_opacity * alpha;
@@ -553,9 +582,8 @@ void render_once(std::string name){
     
 
     // initialize camera
-    std::vector<Eigen::Matrix4f> rotations;
-    float fovX;
-    load_from_file(path, rotations, fovX);
+    std::vector<Camera> cameras;
+    load_cameras_from_file(path, cameras);
 
 
     #ifdef __USE_NPU
@@ -566,15 +594,18 @@ void render_once(std::string name){
     std::cout << "Using CPU for rendering." << std::endl;
     #endif
 
+    //if the output directory does not exist, create it
+    std::string command = "mkdir -p " + path;;
+    system(command.c_str());
+
     std::cout << "doing dataset : " << name << std::endl;
-    for(unsigned int i=0;i < rotations.size();i++){
+    for(unsigned int i=0;i < cameras.size();i++){
         std::cout << "iteration : " << i << std::endl;
-        Camera cam;
-        load_camera(cam, rotations[i], fovX);
         #ifdef __USE_NPU
         clear_buf(group);
+        set_npu_buff(cameras[i]);
         #endif
-        render(group, cam , path + "/output" + std::to_string(i) + ".png");
+        render(group, cameras[i] , path + "/output" + std::to_string(i) + ".png");
     }
 
 }
@@ -586,14 +617,15 @@ int main(int argc, const char *argv[]){
     #endif
 
     std::vector<std::string> dataset_names = {
-        "chair",
-        "drum",
-        "ficus",
-        "hotdog",
-        "lego",
-        "materials",
-        "mic",
-        "ship"
+        "mip-flower"
+        // "chair",
+        // "drum",
+        // "ficus",
+        // "hotdog",
+        // "lego",
+        // "materials",
+        // "mic",
+        // "ship"
     };
 
     for(const auto &name : dataset_names){

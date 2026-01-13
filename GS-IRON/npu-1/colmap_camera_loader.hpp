@@ -7,6 +7,8 @@
 #include <Eigen/Core>
 #include <fstream>
 
+#include "camera.hpp"
+
 template <typename T>
 inline T readBinary(std::ifstream& ifs) {
     T value;
@@ -23,5 +25,7 @@ inline std::string readCString(std::ifstream& ifs) {
     }
     return s;
 }
+
+void loadColmapCameras(const std::string& colmap_path, std::vector<Camera> &cameras);
 
 #endif  // COLMAP_CAMERA_LOADER_HPP

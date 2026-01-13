@@ -97,8 +97,8 @@ void get_camera_pos(bf16* restrict camera_mat, bf16 *restrict gaussians, bf16 *r
     // // load input data
     bf16* output2 = output;
 
-    float height = 800;
-    float width = 800;
+    float height = *((float*)(camera_mat + 16));
+    float width = *((float*)(camera_mat + 18));
 
     aie::vector<float, 16> cam_vec = aie::zeros<float, 16>();
     for(int i=0;i<16;i+=2){
@@ -358,6 +358,10 @@ void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict out
 
     bf16 fx = params[16];
     bf16 fy = params[17];
+    bf16 tanfovX = params[18];
+    bf16 tanfovY = params[19];
+    bf16 tanfovX_neg = bf16(-1) * tanfovX;
+    bf16 tanfovY_neg = bf16(-1) * tanfovY;
     aie::vector<bf16, 16> cam_fx_vec = aie::filter_even(aie::broadcast(fx));
     aie::vector<bf16, 16> cam_fy_vec = aie::filter_even(aie::broadcast(fy));
     fx = bf16(-1) * fx;
@@ -377,6 +381,13 @@ void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict out
         aie::vector<bf16,16> xs = aie::load_v<16>(tmp);
         aie::vector<bf16,16> ys = aie::load_v<16>(tmp + 16);
         aie::vector<bf16,16> zs = aie::load_v<16>(tmp + 32);
+
+        aie::vector<bf16, 16> xs_zs = aie::div(xs, zs);
+        xs_zs = aie::min(aie::max(xs_zs, tanfovX_neg), tanfovX);
+        xs = aie::mul(xs_zs, zs);
+        aie::vector<bf16, 16> ys_zs = aie::div(ys, zs);
+        ys_zs = aie::min(aie::max(ys_zs, tanfovY_neg), tanfovY);
+        ys = aie::mul(ys_zs, zs);
 
         aie::vector<bf16,16> fx_z = aie::div(cam_fx_vec, zs);
         aie::vector<bf16,16> fy_z = aie::div(cam_fy_vec, zs);
@@ -784,7 +795,7 @@ void f32_get_conv2D_1(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_
 void f32_get_conv2D_2(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_SIZE, 2>(JR_in, cov3D_in, out); }
 void f32_get_conv2D_3(bf16 *JR_in, bf16 *cov3D_in, bf16 *out) { get_conv2D<TILE_SIZE, 3>(JR_in, cov3D_in, out); }
 
-void f32_get_color_pre(bf16 *SH_coeff, bf16 *gaussians_data, bf16 *output) {get_color_pre<TILE_SIZE / CONV3D_TILE_NUM>(SH_coeff, gaussians_data, output);}
+void f32_get_color_pre(bf16 *SH_coeff, bf16 *gaussians_data, bf16 *output) {get_color_pre<TILE_SIZE / CONV3D_TILE_NUM / 2>(SH_coeff, gaussians_data, output);}
 
 void f32_get_color_post(bf16 *xyz_factors, bf16 *gaussians_data, bf16 *output) {get_color_post<TILE_SIZE / CONV3D_TILE_NUM>(xyz_factors, gaussians_data, output);}
 

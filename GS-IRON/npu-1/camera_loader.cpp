@@ -2,6 +2,7 @@
 #include "camera.hpp"
 #include "util.hpp"
 #include "base.hpp"
+#include "colmap_camera_loader.hpp"
 
 #include <Eigen/Dense>
 #include <fstream>
@@ -11,6 +12,34 @@
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
+
+void set_npu_buff(Camera& cam){
+
+    // set matrix for NPU computation
+    #ifdef __USE_NPU
+    for(int i=0;i<4;i++){
+        for(int j=0;j<4;j++){
+            bufInA[i * 4 + j] = float_to_bfloat16(cam.world_to_view(i,j));
+            bufInA[i * 4 + 20 + j] = float_to_bfloat16(cam.full_proj(i,j));
+        }
+    }
+    bufInA[16] = cam.fx;
+    bufInA[17] = cam.fy;
+    
+    set_float_into_two_bfloat(cam.height, &bufInA[36]);
+    set_float_into_two_bfloat(cam.width, &bufInA[38]);
+    bufInA[18] = cam.tan_fovX * 1.3;
+    bufInA[19] = cam.tan_fovY * 1.3;
+    bufInA[56] = cam.pos[0];
+    bufInA[57] = cam.pos[1];
+    bufInA[58] = cam.pos[2];
+    bufInA[59] = 0;
+    bufInA[60] = 0;
+    bufInA[61] = 0;
+    bufInA[62] = 0;
+    bufInA[63] = 0;
+    #endif
+}
 
 void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C, float fovX){
 
@@ -30,26 +59,7 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C, float fovX){
 
     setup_camera(cam);
 
-
-    // set matrix for NPU computation
-    #ifdef __USE_NPU
-    for(int i=0;i<4;i++){
-        for(int j=0;j<4;j++){
-            bufInA[i * 4 + j] = float_to_bfloat16(cam.world_to_view(i,j));
-            bufInA[i * 4 + 18 + j] = float_to_bfloat16(cam.full_proj(i,j));
-        }
-    }
-    bufInA[16] = cam.fx;
-    bufInA[17] = cam.fy;
-    bufInA[54] = cam.pos[0];
-    bufInA[55] = cam.pos[1];
-    bufInA[56] = cam.pos[2];
-    bufInA[57] = 0;
-    bufInA[58] = 0;
-    bufInA[59] = 0;
-    bufInA[60] = 0;
-    bufInA[61] = 0;
-    #endif
+    //set_npu_buff(cam);
     
 }
 
@@ -96,4 +106,23 @@ void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations, f
     }
 
     return;
+}
+
+void load_cameras_from_file(std::string path, std::vector<Camera>& cameras) {
+
+    //if transform.json exist in path
+    if(std::filesystem::exists(path + "/transforms_train.json")){
+        
+        // open json file
+        std::vector<Eigen::Matrix4f> rotations;
+        float fovX;
+        load_from_file(path, rotations, fovX);
+        cameras.resize(rotations.size());
+        for(unsigned int i=0;i < rotations.size();i++){
+            load_camera(cameras[i], rotations[i], fovX);
+        }
+
+    }else if(std::filesystem::exists(path + "/cameras.bin")){
+        loadColmapCameras(path, cameras);
+    }
 }

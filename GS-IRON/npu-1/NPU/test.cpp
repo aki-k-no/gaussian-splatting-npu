@@ -121,24 +121,6 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 
                 
 
-                // for(int j=0;j<4;j++){
-
-                //     DATATYPE_OUT ref = bufIn1[4 * j] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1] * bufIn2[offset + iter * 32 + i + 4]
-                //                   + bufIn1[4 * j + 2] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3] * bufIn2[offset + iter * 32 + i + 12];
-                //     DATATYPE_OUT test = bufOut[tile * TILE_SIZE * 4 + iter * 16 + i * 4 + j];
-                //     if (test < ref - 0.25 || test > ref + 0.25) {
-                //         if (verbosity >= 1){
-
-                //             std::cout << "Error in output " << tile * TILE_SIZE * 14 + iter * 16 + i + j * 4 << " : " << test << " != " << ref << std::endl;
-                //         }
-                //         errors++;
-
-                //     } else {
-                //         if (verbosity >= 2)
-                //             std::cout << "Correct in output " << tile * TILE_SIZE * 14 + iter * 16 + i + j * 4 << " : " << test << " == " << ref << std::endl;
-                //     }
-                    
-                // }
 
                 
 
@@ -277,10 +259,10 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
                 for(int j=0;j<2;j++){
                     
                     int offset = tile * TILE_SIZE * 72;
-                    float ref = (bufIn1[4 * j + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1 + 18] * bufIn2[offset + iter * 32 + i + 4]
-                                  + bufIn1[4 * j + 2 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 18] * bufIn2[offset + iter * 32 + i + 12])
-                                  / (bufIn1[12 + 18] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 18] * bufIn2[offset + iter * 32 + i + 4]
-                                  + bufIn1[14 + 18] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[15 + 18] * bufIn2[offset + iter * 32 + i + 12]);
+                    float ref = (bufIn1[4 * j + 20] * bufIn2[offset + iter * 32 + i] + bufIn1[4 * j + 1 + 20] * bufIn2[offset + iter * 32 + i + 4]
+                                  + bufIn1[4 * j + 2 + 20] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[4 * j + 3 + 20] * bufIn2[offset + iter * 32 + i + 12])
+                                  / (bufIn1[12 + 20] * bufIn2[offset + iter * 32 + i] + bufIn1[13 + 20] * bufIn2[offset + iter * 32 + i + 4]
+                                  + bufIn1[14 + 20] * bufIn2[offset + iter * 32 + i + 8] + bufIn1[15 + 20] * bufIn2[offset + iter * 32 + i + 12]);
                     
                                   ref = (ref + 1) * 0.5 * 800.f - 0.5f;
 
@@ -315,14 +297,14 @@ int verify(DATATYPE_IN1 *bufIn1, DATATYPE_IN2 *bufIn2,
     {
         DATATYPE_IN1 sh[16];
         for(int i=0;i<16;i++){
-            sh[i] = bufIn1[38 + i];
+            sh[i] = bufIn1[40 + i];
         }
         DATATYPE_IN1 cam_x;
         DATATYPE_IN1 cam_y;
         DATATYPE_IN1 cam_z;
-        cam_x = bufIn1[54];
-        cam_y = bufIn1[55];
-        cam_z = bufIn1[56];
+        cam_x = bufIn1[56];
+        cam_y = bufIn1[57];
+        cam_z = bufIn1[58];
 
 
         for (int tile = 0; tile < TILE_COUNT; tile++) {
@@ -400,6 +382,18 @@ void fill_bufB(DATATYPE_IN2 *bufInB){
     }
 }
 
+inline void set_float_into_two_bfloat(float f, std::bfloat16_t* ptr){
+    uint32_t u32;
+    memcpy(&u32, &f, sizeof(float));
+    uint16_t hi16 = static_cast<uint16_t>(u32 >> 16);
+    uint16_t lo16 = static_cast<uint16_t>(u32 & 0xFFFF);
+    std::bfloat16_t high, low;
+    memcpy(&high, &hi16, sizeof(uint16_t));
+    memcpy(&low, &lo16, sizeof(uint16_t));
+    ptr[1] = high;
+    ptr[0] = low;
+}
+
 int main(int argc, const char *argv[]) {
 
 
@@ -451,24 +445,29 @@ int main(int argc, const char *argv[]) {
     DATATYPE_IN1 *bufInA = bo_inA.map<DATATYPE_IN1 *>();
     
     generate_random_bfloat16(bufInA, IN1_SIZE, 0, 3);
-    bufInA[38] = 0.28209479177387814f;
 
-    bufInA[39] = 0.4886025119029199f;
-    bufInA[40] = 0.4886025119029199f;
+    //put float into two bf16
+    set_float_into_two_bfloat(800.f, &bufInA[36]); //fx
+    set_float_into_two_bfloat(800.f, &bufInA[38]); //fy
+
+    bufInA[40] = 0.28209479177387814f;
+
     bufInA[41] = 0.4886025119029199f;
+    bufInA[42] = 0.4886025119029199f;
+    bufInA[43] = 0.4886025119029199f;
 
-    bufInA[42] = 1.0925484305920792f;
-    bufInA[43] = -1.0925484305920792f;
-    bufInA[44] = 0.31539156525252005f;
+    bufInA[44] = 1.0925484305920792f;
     bufInA[45] = -1.0925484305920792f;
-    bufInA[46] = 0.5462742152960396f;
-    bufInA[47] = -0.5900435899266435f;
-    bufInA[48] = 2.890611442640554f;
-    bufInA[49] = -0.4570457994644658f;
-    bufInA[50] = 0.3731763325901154f;
+    bufInA[46] = 0.31539156525252005f;
+    bufInA[47] = -1.0925484305920792f;
+    bufInA[48] = 0.5462742152960396f;
+    bufInA[49] = -0.5900435899266435f;
+    bufInA[50] = 2.890611442640554f;
     bufInA[51] = -0.4570457994644658f;
-    bufInA[52] = 1.445305721320277f;
-    bufInA[53] = -0.5900435899266435f;
+    bufInA[52] = 0.3731763325901154f;
+    bufInA[53] = -0.4570457994644658f;
+    bufInA[54] = 1.445305721320277f;
+    bufInA[55] = -0.5900435899266435f;
     
 
     // Initialize buffer bo_inFactor

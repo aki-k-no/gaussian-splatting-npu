@@ -39,7 +39,7 @@ def precomp(dev):
         line_size = 128 * 256
         tile_size = 128
         sub_tiles = line_size // tile_size
-        world_to_view_size = 4 * 4 + 2
+        world_to_view_size = 4 * 4 + 4
         get_camera_size = 4 * 4 + 4
         campos_coeff_size = 8 + 4 * 4
         conv3D_num = 4
@@ -69,7 +69,9 @@ def precomp(dev):
 
         
         send3_ty = np.ndarray[(56 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
+        send3_ty_half = np.ndarray[(56 * line_size // sub_tiles // 2,), np.dtype[xfr_dtype]]
         color_data_ty = np.ndarray[(56 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        color_data_half_ty = np.ndarray[(56 * line_size // sub_tiles // conv3D_num // 2,), np.dtype[xfr_dtype]]
         pos_data_ty_accum = np.ndarray[(4 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
         pos_data_ty = np.ndarray[(4 * line_size // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         dir_ty = np.ndarray[(9 * line_size // sub_tiles,), np.dtype[xfr_dtype]]
@@ -81,6 +83,7 @@ def precomp(dev):
         return3_ty = np.ndarray[(4 * line_size  // sub_tiles,), np.dtype[xfr_dtype]]
         color_return_ty = np.ndarray[(4 * line_size  // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
         color_inter_ty = np.ndarray[(16 * line_size  // sub_tiles // conv3D_num,), np.dtype[xfr_dtype]]
+        color_inter_half_ty = np.ndarray[(16 * line_size  // sub_tiles // conv3D_num // 2,), np.dtype[xfr_dtype]]
 
 
         # this is required for runtime sequence
@@ -113,7 +116,7 @@ def precomp(dev):
         ) for i in range(conv3D_num)]
 
         color_func_pre = external_func(
-            "f32_get_color_pre", inputs=[campos_coeff_ty, color_data_ty, color_inter_ty]
+            "f32_get_color_pre", inputs=[campos_coeff_ty, color_data_half_ty, color_inter_half_ty]
         )
         
         color_func_post = external_func(
@@ -136,15 +139,18 @@ def precomp(dev):
         ShimTile4 = tile(4, 0)
         MemTile4 = tile(4, 1)
         MemTile5 = tile(5, 1)
+        ShimTile6 = tile(6, 0)
+        MemTile6 = tile(6, 1)
+        MemTile7 = tile(7, 1)
         ComputeTileV2w = tile(0, 2)
         ComputeTileCamera = tile(0, 3)
         ComputeTileJR = tile(0, 4)
         ComputeTileIndex = tile(0,5)
         ComputeTileConv3Ds = [tile(1, 2), tile(1,3), tile(1, 4), tile(1,5)]
         ComputeTileConv2Ds = [tile(2, 2), tile(2, 3), tile(2, 4), tile(2, 5)]
-        ComputeTTileDirs = [tile(3, 2), tile(3, 3), tile(3, 4), tile(3, 5)]
-        ComputeTileColorsPre = [tile(4, 2), tile(4, 3), tile(4, 4), tile(4, 5)]
-        ComputeTileColorsPost = [tile(5, 2), tile(5, 3), tile(5, 4), tile(5, 5)]
+        ComputeTileColorsPre = [tile(3, 2), tile(3, 3), tile(3, 4), tile(3, 5)] + [tile(4, 2), tile(4, 3), tile(4, 4), tile(4, 5)]
+        ComputeTileColorsInter = [tile(5, 2), tile(5, 3), tile(5, 4), tile(5, 5)]
+        ComputeTileColorsPost = [tile(6, 2), tile(6, 3), tile(6, 4), tile(6, 5)]
 
         # AIE-array data movement with object fifos
         of_essentials = object_fifo("essentials", ShimTile0, MemTile0, 2, essentials_ty)
@@ -187,23 +193,27 @@ def precomp(dev):
         of_cov2D_returns = [object_fifo("cov2D_return_" + str(i), ComputeTileConv2Ds[i], MemTile1, 2, cov2D_return_ty) for i in range(conv3D_num)]
         object_fifo_link(of_cov2D_returns, of_out3_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
 
-        # of_coeff_dir = object_fifo("coeff_dir_unit", ShimTile3, MemTile3, 2, campos_coeff_ty)
-        # of_dir_send = [object_fifo("coeff_dir_" + str(i), MemTile3, ComputeTTileDirs[i], 2, campos_coeff_ty) for i in range(conv3D_num)]
-        # object_fifo_link(of_coeff_dir, of_dir_send, [], [4 * line_size // sub_tiles * i for i in range(conv3D_num)])
 
-        # of_dir_returns = [object_fifo("dir_return_" + str(i), ComputeTTileDirs[i], MemTile3, 2, dir_ty) for i in range(conv3D_num)]
-
-
-        of_color_inters = [object_fifo("color_inter_" + str(i), ComputeTileColorsPre[i], ComputeTileColorsPost[i], 2, color_inter_ty) for i in range(conv3D_num)]
+        of_color_inters1 = [object_fifo("color_inter1_" + str(i), ComputeTileColorsPre[2 * i], MemTile3 if i < 2 else MemTile7, 2, color_inter_half_ty) for i in range(conv3D_num)]
+        of_color_inters2 = [object_fifo("color_inter2_" + str(i), ComputeTileColorsPre[2 * i + 1], MemTile3 if i < 2 else MemTile7, 2, color_inter_half_ty) for i in range(conv3D_num)]
+        of_color_inters = [object_fifo("color_inter_" + str(i), MemTile3 if i < 2 else MemTile7, ComputeTileColorsPost[i], 2, color_inter_ty) for i in range(conv3D_num)]
+        for i in range(conv3D_num):
+            object_fifo_link([of_color_inters1[i], of_color_inters2[i]], of_color_inters[i], [0, 16 * line_size // sub_tiles // conv3D_num // 2], [])
 
         of_color_return_unit = object_fifo("color_return_unit",  MemTile5, ShimTile4, 2, return3_ty)
         of_color_returns = [object_fifo("color_return_" + str(i), ComputeTileColorsPost[i], MemTile5, 2, color_return_ty) for i in range(conv3D_num)]
         object_fifo_link(of_color_returns, of_color_return_unit, [4 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)], [])
         
-        of_color_send_unit = object_fifo("color_send_unit", ShimTile4, MemTile4, 2, send3_ty)
-        of_color_sends = [object_fifo("color_send_" + str(i), MemTile4, [ComputeTileColorsPre[i], ComputeTileColorsPost[i]], 2, color_data_ty) for i in range(conv3D_num)]
+        of_color_send_unit = object_fifo("color_send_unit", ShimTile6, MemTile6, 2, send3_ty)
+        of_color_send_unit2 = object_fifo("color_send_unit2", ShimTile4, MemTile4, 2, send3_ty_half)
+        of_color_send_unit3 = object_fifo("color_send_unit3", ShimTile4, MemTile5, 2, send3_ty_half)
+        of_color_sends = [object_fifo("color_send_" + str(i), MemTile6, [ComputeTileColorsPost[i]], 2, color_data_ty) for i in range(conv3D_num)]
+        of_color_sends_2_1 = [object_fifo("color_send2_" + str(i), MemTile4, [ComputeTileColorsPre[i]], 2, color_data_half_ty) for i in range(conv3D_num)]
+        of_color_sends_2_2 = [object_fifo("color_send3_" + str(i), MemTile5, [ComputeTileColorsPre[i + 4]], 2, color_data_half_ty) for i in range(conv3D_num)]
         object_fifo_link(of_color_send_unit, of_color_sends, [], [56 * line_size // sub_tiles // conv3D_num * i for i in range(conv3D_num)])
-
+        object_fifo_link(of_color_send_unit2, of_color_sends_2_1, [], [56 * line_size // sub_tiles // conv3D_num // 2 * i for i in range(conv3D_num)])
+        object_fifo_link(of_color_send_unit3, of_color_sends_2_2, [], [56 * line_size // sub_tiles // conv3D_num // 2 * i for i in range(conv3D_num)])
+        of_color_sends_2 = of_color_sends_2_1 + of_color_sends_2_2
 
         # Compute tile for Projection Mat
         @core(ComputeTileV2w, "precomp.a")
@@ -287,22 +297,36 @@ def precomp(dev):
         
         #color tile 1
         for i in range(conv3D_num):
-            @core(ComputeTileColorsPre[i], "precomp.a")
-            def core_body_color():
+            @core(ComputeTileColorsPre[2 * i], "precomp.a")
+            def core_body_color1():
                 for _ in range_(0xFFFFFFFF):
                     elemIn1 = of_coeff.acquire(ObjectFifoPort.Consume, 1)
                     for _ in range_(sub_tiles):
-                        elemIn2 = of_color_sends[i].acquire(ObjectFifoPort.Consume, 1)
-                        elemOut = of_color_inters[i].acquire(ObjectFifoPort.Produce, 1)
+                        elemIn2 = of_color_sends_2[2 * i].acquire(ObjectFifoPort.Consume, 1)
+                        elemOut = of_color_inters1[i].acquire(ObjectFifoPort.Produce, 1)
                         color_func_pre(elemIn1, elemIn2, elemOut)
-                        of_color_inters[i].release(ObjectFifoPort.Produce,1)
-                        of_color_sends[i].release(ObjectFifoPort.Consume, 1)
+                        of_color_inters1[i].release(ObjectFifoPort.Produce,1)
+                        of_color_sends_2[2 * i].release(ObjectFifoPort.Consume, 1)
+                    of_coeff.release(ObjectFifoPort.Consume, 1)
+        
+        #color tile 1
+        for i in range(conv3D_num):
+            @core(ComputeTileColorsPre[2 * i + 1], "precomp.a")
+            def core_body_color2():
+                for _ in range_(0xFFFFFFFF):
+                    elemIn1 = of_coeff.acquire(ObjectFifoPort.Consume, 1)
+                    for _ in range_(sub_tiles):
+                        elemIn2 = of_color_sends_2[2 * i + 1].acquire(ObjectFifoPort.Consume, 1)
+                        elemOut = of_color_inters2[i].acquire(ObjectFifoPort.Produce, 1)
+                        color_func_pre(elemIn1, elemIn2, elemOut)
+                        of_color_inters2[i].release(ObjectFifoPort.Produce,1)
+                        of_color_sends_2[2 * i + 1].release(ObjectFifoPort.Consume, 1)
                     of_coeff.release(ObjectFifoPort.Consume, 1)
         
         #color tile 2
         for i in range(conv3D_num):
             @core(ComputeTileColorsPost[i], "precomp.a")
-            def core_body_color():
+            def core_body_color3():
                 for _ in range_(0xFFFFFFFF):
                     for _ in range_(sub_tiles):
                         elemOut = of_color_returns[i].acquire(ObjectFifoPort.Produce, 1)
@@ -310,13 +334,13 @@ def precomp(dev):
                         elemIn2 = of_color_sends[i].acquire(ObjectFifoPort.Consume, 1)
                         color_func_post(elemIn1, elemIn2, elemOut)
                         of_color_sends[i].release(ObjectFifoPort.Consume, 1)
-                        elemIn2 = of_color_inters[i].release(ObjectFifoPort.Consume, 1)
+                        of_color_inters[i].release(ObjectFifoPort.Consume, 1)
                         of_color_returns[i].release(ObjectFifoPort.Produce, 1)
 
 
 
 
-        tiles_to_trace = [ComputeTileConv3Ds[2],ComputeTileConv2Ds[2], ShimTile3]
+        tiles_to_trace = [ComputeTileColorsPre[2], ComputeTileColorsPost[2], ShimTile3]
 
 
         # To/from AIE-array data movement
@@ -349,6 +373,16 @@ def precomp(dev):
                 strides = [0, tile_size * 72, 8 * tile_size,1],
                 offset = 16 * tile_size
             )
+            color_task_2 = shim_dma_single_bd_task(of_color_send_unit2, B,
+                sizes = [1, sub_tiles, 7, 8 * tile_size // 2],
+                strides = [0, tile_size * 72, 8 * tile_size // 2,1],
+                offset = 16 * tile_size
+            )
+            color_task_3 = shim_dma_single_bd_task(of_color_send_unit3, B,
+                sizes = [1, sub_tiles, 7, 8 * tile_size // 2],
+                strides = [0, tile_size * 72, 8 * tile_size // 2,1],
+                offset = (16 + 7 * 8 //2) * tile_size
+            )
             # out1_task = shim_dma_single_bd_task(
             #     of_out1_unit, C, issue_token=True,
             #     sizes = [1, 1, 1, 4 * line_size],
@@ -380,9 +414,9 @@ def precomp(dev):
                 offset = 10 * line_size
             )
 
-            dma_start_task(import_task, gaussian_task, opacity_task, rot_scale_task, color_task, out2_task, out3_task, out4_task, out_index_task)
+            dma_start_task(import_task, gaussian_task, opacity_task, rot_scale_task, color_task, color_task_2, color_task_3, out2_task, out3_task, out4_task, out_index_task)
             dma_await_task(out2_task, out3_task, out4_task, out_index_task)
-            dma_free_task(import_task, gaussian_task, opacity_task, rot_scale_task, color_task)
+            dma_free_task(import_task, gaussian_task, opacity_task, rot_scale_task, color_task, color_task_2, color_task_3)
             if trace_size > 0:
                 trace_utils.gen_trace_done_aie2(ShimTile3)
     

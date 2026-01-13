@@ -60,6 +60,9 @@ cp :
 run: $(TARGET)
 	export LSAN_OPTIONS=verbosity=1:log_threads=1
 	${powershell} ./$< -x build/final_precomp.xclbin -i build/insts_precomp.bin -k MLIR_AIE
+gdb: $(TARGET)
+	export LSAN_OPTIONS=verbosity=1:log_threads=1
+	${powershell} gdb --args ./$< -x build/final_precomp.xclbin -i build/insts_precomp.bin -k MLIR_AIE
 
 clean:
 	rm -f $(OBJS) $(TARGET)

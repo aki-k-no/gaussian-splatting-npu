@@ -59,8 +59,8 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
     }
     int total_lines = ((count - 1)/ CHUNK_SIZE + 1) * CHUNK_SIZE;
     #ifdef __USE_NPU
-    group.xyz_buf.resize(total_lines * 71);
-    memset(group.xyz_buf.data(), 0, (total_lines * 71) * sizeof(std::bfloat16_t));
+    group.xyz_buf.resize(total_lines * 72);
+    memset(group.xyz_buf.data(), 0, (total_lines * 72) * sizeof(std::bfloat16_t));
 
     group.xyz_view_buf.resize(total_lines * 4);
     memset(group.xyz_view_buf.data(), 0, (total_lines * 4) * sizeof(std::bfloat16_t));
@@ -73,6 +73,7 @@ void loadGaussiansFromFile(const std::string &filename, GaussianGroup &group) {
 
     group.color_buf.resize(total_lines * 4);
     memset(group.color_buf.data(), 0, (total_lines * 4) * sizeof(std::bfloat16_t));
+
     #endif
 
     // Read Gaussian data
