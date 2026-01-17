@@ -4,6 +4,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <iostream>
+#include <map>
 
 #include "camera.hpp"
 #include "util.hpp"
@@ -46,8 +47,8 @@ struct CameraInfo {
     std::vector<double> params;
 };
 
-std::vector<Image> read_extrinsics_binary(const std::string& path){
-    std::vector<Image> images;
+std::map<uint32_t, Image> read_extrinsics_binary(const std::string& path){
+    std::map<uint32_t, Image> images;
 
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) {
@@ -93,8 +94,7 @@ std::vector<Image> read_extrinsics_binary(const std::string& path){
             img.xys.emplace_back(x, y);
             img.point3D_ids.push_back(pid);
         }
-
-        images.push_back(std::move(img));
+        images[img.id] = std::move(img);
     }
 
     return images;
@@ -144,13 +144,15 @@ std::unordered_map<uint32_t, CameraInfo> read_intrinsics_binary(const std::strin
 }
 
 void readColmapCameras(
-    const std::vector<Image>& cam_extrinsics,
+    const std::map<uint32_t, Image>& cam_extrinsics,
     const std::unordered_map<uint32_t, CameraInfo>& cam_intrinsics,
     std::vector<Camera> &cam_infos)
 {
     size_t idx = 0;
 
-    for (const auto& extr : cam_extrinsics) {
+    cam_infos.reserve(cam_extrinsics.size());
+
+    for (const auto& [id, extr] : cam_extrinsics) {
 
         std::cout << "\rReading camera " << ++idx << "/" << cam_extrinsics.size() << std::flush;
 

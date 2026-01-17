@@ -6,6 +6,7 @@
 #include <iostream>
 
 #include "camera.hpp"
+#include "gaussian.hpp"
 
 void getRelatedTiles(const std::array<float, 2>& screen_coord, int max_radius,std::array<int, 2>& min_bound, std::array<int, 2>& max_bound, std::array<int, 2>& grid_bound);
 Eigen::Matrix4f getProjMat(const float zfar, const float znear, const float fovX, const float fovY);
@@ -106,5 +107,28 @@ inline void set_float_into_two_bfloat(float f, std::bfloat16_t* ptr){
     ptr[0] = low;
 }
 
+inline void set_threshold(std::vector<Gaussian3D>& gaussians, float &threshold){
+    std::vector<double> scales;
+    for (auto& g : gaussians){
+        scales.push_back(g.scale[0]);
+        scales.push_back(g.scale[1]);
+        scales.push_back(g.scale[2]);
+    } 
+    std::nth_element(scales.begin(),
+                 scales.begin() + scales.size()/2,
+                 scales.end());
+    double median = scales[scales.size()/2];
+
+    std::vector<double> dev;
+    for (double s : scales) dev.push_back(std::abs(s - median));
+
+    std::nth_element(dev.begin(),
+                 dev.begin() + dev.size()/2,
+                 dev.end());
+    double mad = dev[dev.size()/2];
+
+    threshold = median + 40.0 * mad;
+
+}
 
 #endif // UTIL_H

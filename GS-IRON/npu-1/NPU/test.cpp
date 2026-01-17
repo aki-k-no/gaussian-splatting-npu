@@ -446,6 +446,9 @@ int main(int argc, const char *argv[]) {
     
     generate_random_bfloat16(bufInA, IN1_SIZE, 0, 3);
 
+    bufInA[18] = 100.f;
+    bufInA[19] = 100.f;
+
     //put float into two bf16
     set_float_into_two_bfloat(800.f, &bufInA[36]); //fx
     set_float_into_two_bfloat(800.f, &bufInA[38]); //fy

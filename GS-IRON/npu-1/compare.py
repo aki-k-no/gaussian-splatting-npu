@@ -17,7 +17,20 @@ def compute_mse(img1_path: str, img2_path: str, normalize: bool = False) -> floa
     if os.path.isdir(img1_path) and os.path.isdir(img2_path):
         exts = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
         files1 = {f for f in os.listdir(img1_path) if os.path.splitext(f)[1].lower() in exts}
+
+
+
         files2 = {f for f in os.listdir(img2_path) if os.path.splitext(f)[1].lower() in exts}
+
+        
+        # if filename is like 00001.png, 00002.png, ...
+        # convert it to output1.png, output2.png, ...
+        # Check if filenames are numeric (like 00001.png) before converting
+        # if any(os.path.splitext(f)[0].isdigit() for f in files1):
+        #     files1 = {f"output{int(os.path.splitext(f)[0])}{os.path.splitext(f)[1]}" for f in files1}
+        # if any(os.path.splitext(f)[0].isdigit() for f in files2):
+        #     files2 = {f"output{int(os.path.splitext(f)[0])}{os.path.splitext(f)[1]}" for f in files2}
+
         common = sorted(files1 & files2)
         if not common:
             raise ValueError("No common image files found between the two directories.")
@@ -124,12 +137,21 @@ def compute_ssim(img1_path, img2_path, normalize: bool = False) -> float:
         exts = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")
         set1 = {f for f in os.listdir(img1_path) if f.lower().endswith(exts)}
         set2 = {f for f in os.listdir(img2_path) if f.lower().endswith(exts)}
+        
+        # if any(os.path.splitext(f)[0].isdigit() for f in set1):
+        #     set1 = {f"output{int(os.path.splitext(f)[0])}{os.path.splitext(f)[1]}" for f in set1}
+        # if any(os.path.splitext(f)[0].isdigit() for f in set2):
+        #     set2 = {f"output{int(os.path.splitext(f)[0])}{os.path.splitext(f)[1]}" for f in set2}
+
         common = sorted(set1.intersection(set2))
         if not common:
             raise ValueError("No matching image filenames across the two directories.")
         vals = []
         for name in common:
-            vals.append(_ssim_pair(os.path.join(img1_path, name), os.path.join(img2_path, name), normalize))
+            val = _ssim_pair(os.path.join(img1_path, name), os.path.join(img2_path, name), normalize)
+            if(val < 0.9):
+                print(f"SSIM low for {name}: {val}")
+            vals.append(val)
         return float(np.mean(vals))
 
     return _ssim_pair(img1_path, img2_path, normalize)

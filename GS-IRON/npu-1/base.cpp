@@ -104,11 +104,13 @@ void setup_npu(int argc, const char *argv[]){
 
     bufInstr = bo_instr.map<void *>();
     memcpy(bufInstr, instr_v.data(), instr_v.size() * sizeof(int));
+    bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     
+
     bufInA = bo_inA.map<DATATYPE_IN1 *>();
     bufInB = bo_inB.map<DATATYPE_IN2 *>();
     bufOut = bo_outC.map<DATATYPE_OUT *>();
-
+    
 
 
 }
@@ -224,7 +226,7 @@ void clear_buf(GaussianGroup &group){
 
 int omit_count = 0;
 
-void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DATATYPE_OUT *bufOut, int numGaussians, Camera& cam, std::array<int, 2> &grid){
+void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DATATYPE_OUT *bufOut, int numGaussians, Camera& cam, std::array<int, 2> &grid, float threshold){
     // extract the data and save
     memcpy(group.xyz_view_buf.data() + i * CHUNK_SIZE * 4, bufOut, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
     memcpy(group.color_buf.data() + i * CHUNK_SIZE * 4, bufOut + CHUNK_SIZE * 10, CHUNK_SIZE * 4 * sizeof(DATATYPE_IN2));
@@ -251,12 +253,21 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
             continue;
         }
         
-        g.screen_coord[0] = get_float_from_pointer(bufOut + load_idx);
-        g.screen_coord[1] = get_float_from_pointer(bufOut + load_idx + 2);
+        //g.screen_coord[0] = get_float_from_pointer(bufOut + load_idx);
+        //g.screen_coord[1] = get_float_from_pointer(bufOut + load_idx + 2);
 
-        if(g.index == 266399){
-            std::cout << g.screen_coord[0] << ", " << g.screen_coord[1] << ", depth: " << g.screen_depth_index << std::endl;
-        }
+        
+        Eigen::Vector4f pos_vec;
+        pos_vec << g.xyz[0], g.xyz[1], g.xyz[2], 1.0f;
+        Eigen::Vector4f pos_view = cam.full_proj * pos_vec;
+        float w = pos_view[3];
+        pos_view /= w; 
+        
+
+        g.screen_coord[0] = ((pos_view[0] + 1.0) * cam.width - 1.0) * 0.5;
+        g.screen_coord[1] = ((pos_view[1] + 1.0) * cam.height - 1.0) * 0.5;
+
+        
 
                     
         float a1 = bfloat16_to_float(bufOut[load_idx2]);
@@ -266,7 +277,7 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
                        a2, a3;
         load_idx2 += 4;
         load_idx += 4;
-        if(std::isnan(a1) && g.opacity > 0.03f || g.scale[0] > 0.3f || g.scale[1] > 0.3f || g.scale[2] > 0.3f){
+        if(std::isnan(a1) && g.opacity > 0.1f || g.scale[0] > threshold || g.scale[1] > threshold || g.scale[2] > threshold){
             omit_count++;
             compute_cov2D(group, g, cam, grid, tiles);
             continue;
@@ -294,7 +305,7 @@ void move_to_gaussian(std::vector<Tile> &tiles, int i, GaussianGroup &group, DAT
 }
 
 
-void render(GaussianGroup &group, Camera &cam, std::string img_name){
+void render(GaussianGroup &group, Camera &cam, std::string img_name, float threshold){
     
     omit_count = 0;
     
@@ -324,9 +335,6 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     int numGaussians =  gaussians.size();
 
     #ifdef __USE_NPU
-    bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-    bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-    bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
     bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
     // instead, calculate with NPU
@@ -350,6 +358,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
     auto end_npu = std::chrono::steady_clock::now();
     auto diff_npu = std::chrono::duration_cast<std::chrono::microseconds>(end_npu - start_npu);
+    std::cout << "First NPU Elapsed" << diff_npu.count() << " micro sec\n";
     tmp += diff_npu.count();
     memcpy(bufOut2, bufOut, CHUNK_SIZE * 14 * sizeof(DATATYPE_IN2));
     
@@ -364,7 +373,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
         
         run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
         }
-        move_to_gaussian(tiles, i, group, bufOut2, numGaussians, cam, grid);
+        move_to_gaussian(tiles, i, group, bufOut2, numGaussians, cam, grid, threshold);
         if(i != (numGaussians - 1) / CHUNK_SIZE){
         run.wait();
         
@@ -453,6 +462,8 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
             colors[i] = std::max(0.0f, colors[i]);
         }
         g.color = colors;
+
+        
     }
     #endif
     
@@ -505,8 +516,8 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                         // compute contribution to pixel
                         Eigen::Vector2f diff;
                         //difference to the center of gaussian
-                        diff[0] = pixel_x + 0.5f - g.screen_coord[0];
-                        diff[1] = pixel_y + 0.5f - g.screen_coord[1];
+                        diff[0] = pixel_x - g.screen_coord[0];
+                        diff[1] = pixel_y - g.screen_coord[1];
                        
                         
                         float exponent = -0.5f * (g.inv_cov_2d(0,0) * diff[0] * diff[0] + g.inv_cov_2d(1,1) * diff[1] * diff[1]) - g.inv_cov_2d(0,1) * diff[0] * diff[1];// diff.transpose() * g.inv_cov_2d * diff;
@@ -534,6 +545,8 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
                         #else
                         pixel_color += pixel_opacity * alpha * g.color;
                         #endif
+                        
+
                         pixel_opacity = pixel_opacity * (1.f - alpha);
                         if(pixel_opacity <= 0.0001f){
                             //early return
@@ -561,12 +574,25 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name){
     ave_total_time.push_back((float)diff.count());
 
     //output to file
+    #ifdef __USE_NPU
+    // warmup NPU for next iter during the imwrite
+    run = kernel(opcode, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
+    #endif
+
     cv::Mat display;
     image.convertTo(display, CV_8UC3, 255.0);
     cv::imwrite(img_name, display);
+
+
+    #ifdef __USE_NPU
+    run.wait();
+
+    #endif
     #endif
 
 }
+
+
 
 void render_once(std::string name){
     std::string path = "data/" + name;
@@ -578,6 +604,8 @@ void render_once(std::string name){
     
     GaussianGroup group;
     loadGaussiansFromFile(ply_name, group);
+    float threshold = 0.3f;
+    set_threshold(group.gaussians, threshold);
 
     
 
@@ -604,8 +632,9 @@ void render_once(std::string name){
         #ifdef __USE_NPU
         clear_buf(group);
         set_npu_buff(cameras[i]);
+        bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
         #endif
-        render(group, cameras[i] , path + "/output" + std::to_string(i) + ".png");
+        render(group, cameras[i] , path + "/output" + std::to_string(i) + ".png", threshold);
     }
 
 }
@@ -617,15 +646,19 @@ int main(int argc, const char *argv[]){
     #endif
 
     std::vector<std::string> dataset_names = {
-        "mip-flower"
-        // "chair",
-        // "drum",
-        // "ficus",
-        // "hotdog",
-        // "lego",
-        // "materials",
-        // "mic",
-        // "ship"
+        //"tt_auditorium",
+        //"tt_ballroom",
+        //"tt_temple"
+        //"mip-flower",
+        //"mip-treehill"
+        "chair",
+        "drum",
+        "ficus",
+        "hotdog",
+        "lego",
+        "materials",
+        "mic",
+        "ship"
     };
 
     for(const auto &name : dataset_names){

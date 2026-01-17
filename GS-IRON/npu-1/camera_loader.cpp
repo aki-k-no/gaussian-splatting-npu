@@ -58,14 +58,12 @@ void load_camera(Camera& cam, Eigen::Matrix4f baseMat_W2C, float fovX){
 
 
     setup_camera(cam);
-
-    //set_npu_buff(cam);
     
 }
 
 void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations, float &fovX) {
     // open json file
-    std::ifstream ifs(path + "/transforms_train.json");
+    std::ifstream ifs(path);
     if (!ifs.is_open()) {
         std::cerr << "cannot open file\n";
         return;
@@ -81,7 +79,7 @@ void load_from_file(std::string path, std::vector<Eigen::Matrix4f> &rotations, f
 
     // save rotation matrices of all frames
     
-    rotations.reserve(frames.size());
+    //rotations.reserve(frames.size());
 
     for (const auto& frame : frames) {
         const auto& tm = frame.at("transform_matrix");
@@ -116,10 +114,23 @@ void load_cameras_from_file(std::string path, std::vector<Camera>& cameras) {
         // open json file
         std::vector<Eigen::Matrix4f> rotations;
         float fovX;
-        load_from_file(path, rotations, fovX);
-        cameras.resize(rotations.size());
-        for(unsigned int i=0;i < rotations.size();i++){
-            load_camera(cameras[i], rotations[i], fovX);
+        load_from_file(path + "/transforms_train.json", rotations, fovX);
+        int train_size = rotations.size();  
+        for(unsigned int i=0;i < train_size;i++){
+            Camera cam;
+            load_camera(cam, rotations[i], fovX);
+            cameras.push_back(cam);
+        }
+
+        // open json file 2
+        if(std::filesystem::exists(path + "/transforms_test.json")){
+            std::cout << "Found transforms_test.json, loading test cameras." << std::endl;
+            load_from_file(path + "/transforms_test.json", rotations, fovX);
+            for(unsigned int i=train_size; i < rotations.size();i++){
+                Camera cam;
+                load_camera(cam, rotations[i], fovX);
+                cameras.push_back(cam);
+            }
         }
 
     }else if(std::filesystem::exists(path + "/cameras.bin")){

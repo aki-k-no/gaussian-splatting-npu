@@ -29,7 +29,7 @@ import aie.utils.trace as trace_utils
 def precomp(dev):
     xfr_dtype = bfloat16
 
-    trace_size = 2048
+    trace_size = 450
 
 
     @device(dev)
@@ -340,7 +340,7 @@ def precomp(dev):
 
 
 
-        tiles_to_trace = [ComputeTileColorsPre[2], ComputeTileColorsPost[2], ShimTile3]
+        tiles_to_trace = [ComputeTileJR, ShimTile3]
 
 
         # To/from AIE-array data movement

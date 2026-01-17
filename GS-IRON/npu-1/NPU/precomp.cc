@@ -37,6 +37,8 @@ using MMUL2 = aie::mmul<4, 8, 4, float, float>;
 template <const int GAUSSIAN_SIZE>
 void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 *restrict output) {    
     // load input data
+    event0();
+
     aie::vector<bf16, 32> va = ::aie::load_v<32>(proj_mat);
     aie::vector<bf16, 32> va_padded = aie::zeros<bf16, 32>();
     for(size_t i=0;i<4;i++){
@@ -88,6 +90,8 @@ void proj_to_view_space(bf16 *restrict proj_mat, bf16 *restrict gaussians, bf16 
         // store data
         output += 64;
     }
+    
+    event1();
     return;
 }
 
@@ -320,6 +324,8 @@ void get_conv3D(bf16 *restrict rotations, bf16 *restrict output){
 template <const int GAUSSIAN_SIZE>
 void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict output){
 
+    event0();
+
     aie::vector<bf16, 16> param_vec = ::aie::load_v<16>(params);
     bf16 a1 = params[0];
     bf16 a2 = params[1];
@@ -438,6 +444,7 @@ void get_J_R(bf16 *restrict params, bf16 *restrict positions, bf16 *restrict out
         }
 
     }
+    event1();
     return;
 }
 
@@ -598,6 +605,7 @@ void get_dir(bf16 *restrict coeff_data, bf16 *restrict gaussians_data, bf16 *res
 
 template<const int GAUSSIAN_SIZE>
 void get_color_pre(bf16 *restrict coeff_data, bf16 *restrict gaussians_data, bf16 *restrict output){
+    event0();
     // load essential variables
     aie::vector<bf16, 8> camera_data = aie::load_v<8>(coeff_data + 16);
     aie::vector<bf16, 8> zeros = aie::zeros<bf16, 8>();
@@ -610,7 +618,6 @@ void get_color_pre(bf16 *restrict coeff_data, bf16 *restrict gaussians_data, bf1
     AIE_LOOP_RANGE(GAUSSIAN_SIZE, GAUSSIAN_SIZE)
     for(size_t i = 0;i<GAUSSIAN_SIZE;i++){
         
-        event0();
         // compute dif vector
         aie::vector<bf16, 8> gaussian_xyz = aie::load_v<8>(gaussians_data);
         
@@ -685,7 +692,6 @@ void get_color_pre(bf16 *restrict coeff_data, bf16 *restrict gaussians_data, bf1
         diff_zs[i] = diff_z;
         // bf16 tmp1 = diff_z * (zz2 - bf16(3) * xx_add_yy);
         //output[12] = tmp1;
-        event1();
         output += 16;
         
         //compute coeff
@@ -715,12 +721,14 @@ void get_color_pre(bf16 *restrict coeff_data, bf16 *restrict gaussians_data, bf1
         }
 
     }
+    event1();
 
 }
 
 template<const int GAUSSIAN_SIZE>
 void get_color_post(bf16 *restrict xyz_factors, bf16 *restrict gaussians_data, bf16 *restrict output){
 
+    event0();
     // to be implemented if needed
     //compute coeff
     gaussians_data += 8;
@@ -736,36 +744,40 @@ void get_color_post(bf16 *restrict xyz_factors, bf16 *restrict gaussians_data, b
     for(size_t i = 0;i<GAUSSIAN_SIZE;i++){
 
         aie::vector<bf16, 16> xyz_factor = ::aie::load_v<16>(xyz_factors);
+        xyz_factor = aie::mul(xyz_factor, sh_coeff);
         xyz_factors += 16;
         
         //just load and compute three times
-        aie::vector<bf16, 16> color1 = aie::concat(aie::load_v<8>(gaussians_data), aie::load_v<8>(gaussians_data + 8));
+        aie::vector<bf16, 16> color1 = aie::load_unaligned_v<16>(gaussians_data);
+        aie::vector<bf16, 16> color2 = aie::load_unaligned_v<16>(gaussians_data + 16);
+        aie::vector<bf16, 16> color3 = aie::load_unaligned_v<16>(gaussians_data + 32);
         color1 = aie::mul(color1, xyz_factor);
-        color1 = aie::mul(color1, sh_coeff);
         bf16 result1 = aie::reduce_add(color1);
-        output[0] = result1 + bf16(0.5);
+        aie::vector<bf16, 8> output_tmp;
+        output_tmp[0] = result1 + bf16(0.5);
 
-        aie::vector<bf16, 16> color2 = aie::concat(aie::load_v<8>(gaussians_data + 16), aie::load_v<8>(gaussians_data + 24));
         color2 = aie::mul(color2, xyz_factor);
-        color2 = aie::mul(color2, sh_coeff);
         bf16 result2 = aie::reduce_add(color2);
-        output[1] = result2 + bf16(0.5);
+        output_tmp[1] = result2 + bf16(0.5);
 
-        aie::vector<bf16, 16> color3 = aie::concat(aie::load_v<8>(gaussians_data + 32), aie::load_v<8>(gaussians_data + 40));
         color3 = aie::mul(color3, xyz_factor);
-        color3 = aie::mul(color3, sh_coeff);
         bf16 result3 = aie::reduce_add(color3);
-        output[2] = result3 + bf16(0.5);
+        output_tmp[2] = result3 + bf16(0.5);
+        aie::store_unaligned_v(output, output_tmp);
         
         gaussians_data += 56;
         output += 4;
     }
-
+event1();
+    
 }
 
 template<const int GAUSSIAN_SIZE>
 void get_special_index(bf16 *camera_xyz, bf16 *opacity, bf16 *output){
 
+    event0();
+    AIE_PREPARE_FOR_PIPELINING
+    AIE_LOOP_RANGE(GAUSSIAN_SIZE / 16, GAUSSIAN_SIZE / 16)
     for(size_t i = 0;i<GAUSSIAN_SIZE / 16;i++){
         aie::vector<bf16, 64> camera_vec = ::aie::load_v<64>(camera_xyz);
         camera_xyz += 64;
@@ -777,6 +789,7 @@ void get_special_index(bf16 *camera_xyz, bf16 *opacity, bf16 *output){
         aie::store_v(output, merged);
         output += 32;
     }
+    event1();
 }
 
 
