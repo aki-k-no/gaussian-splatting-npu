@@ -16,4 +16,13 @@ if __name__ == "__main__":
         print("Usage: python rename.py path/to/directory")
         sys.exit(1)
     dir_path = sys.argv[1]
-    rename_images_in_directory(dir_path)
+    # get all subdirectories and apply
+    for root, dirs, files in os.walk(dir_path):
+        # since this directory is not the place we want, seek their subdirectory ./train/ours_30000/renders
+        root2 = os.path.join(root, "train", "ours_30000", "renders")
+        root3 = os.path.join(root, "train", "ours_30000", "gt")
+        if os.path.exists(root2):
+            rename_images_in_directory(root2)
+        
+        if os.path.exists(root3):
+            rename_images_in_directory(root3)

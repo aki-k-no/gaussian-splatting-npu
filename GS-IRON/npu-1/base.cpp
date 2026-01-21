@@ -201,8 +201,6 @@ inline bool compute_cov2D(GaussianGroup &group, Gaussian3D& g, Camera &cam, std:
 
         
         
-        
-        
 
         // put them into tiles
         for(int tx=rect_min[0];tx<rect_max[0];tx++){
@@ -358,7 +356,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name, float thres
     bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
     auto end_npu = std::chrono::steady_clock::now();
     auto diff_npu = std::chrono::duration_cast<std::chrono::microseconds>(end_npu - start_npu);
-    std::cout << "First NPU Elapsed" << diff_npu.count() << " micro sec\n";
+    //std::cout << "First NPU Elapsed" << diff_npu.count() << " micro sec\n";
     tmp += diff_npu.count();
     memcpy(bufOut2, bufOut, CHUNK_SIZE * 14 * sizeof(DATATYPE_IN2));
     
@@ -389,9 +387,9 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name, float thres
     
     auto end_npu_all = std::chrono::steady_clock::now();
     auto diff_npu_all = std::chrono::duration_cast<std::chrono::microseconds>(end_npu_all - start_npu_all);
-    std::cout << "Total NPU Elapsed" << diff_npu_all.count() << " micro sec\n";
+    //std::cout << "Total NPU Elapsed" << diff_npu_all.count() << " micro sec\n";
 
-    std::cout << "NPU itself Elapsed" << tmp << " micro sec\n";
+    //std::cout << "NPU itself Elapsed" << tmp << " micro sec\n";
     #endif
 
     #ifndef __USE_NPU
@@ -463,17 +461,20 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name, float thres
         }
         g.color = colors;
 
+       
+
         
     }
     #endif
     
-    std::cout << "omit count due to small depth: " << omit_count << std::endl;
+    //std::cout << "omit count due to small depth: " << omit_count << std::endl;
 
     auto middle = std::chrono::steady_clock::now();
     auto diff_mid = std::chrono::duration_cast<std::chrono::microseconds>(middle - start);
     std::cout << "Elapsed at middle" << diff_mid.count() << " micro sec\n";
     ave_npu_time.push_back((float)diff_mid.count());        
 
+    #ifdef __DO_RENDER
     // sort gaussians in each tile based on depth
     for(int tx=0;tx<grid[0];tx++){
         for(int ty=0;ty<grid[1];ty++){
@@ -492,7 +493,6 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name, float thres
             tile.sorted_gaussians = tile.unsorted_gaussians;
         }
     }
-    #ifdef __DO_RENDER
     // rendering
     cv::Mat image(cam.height, cam.width, CV_32FC3, cv::Scalar(0,0,0));
 
@@ -528,6 +528,8 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name, float thres
                         float weight = std::exp(exponent); 
                         float alpha = std::min(0.99f, g.opacity * weight);
 
+                        
+
 
                         
             			if (alpha < 1.0f / 255.0f || std::isinf(weight))
@@ -545,6 +547,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name, float thres
                         #else
                         pixel_color += pixel_opacity * alpha * g.color;
                         #endif
+                        
                         
 
                         pixel_opacity = pixel_opacity * (1.f - alpha);
@@ -571,6 +574,7 @@ void render(GaussianGroup &group, Camera &cam, std::string img_name, float thres
     auto end = std::chrono::steady_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
     std::cout << "Elapsed" << diff.count() << " micro sec\n";
+    std::cout << "\033[3A";
     ave_total_time.push_back((float)diff.count());
 
     //output to file
@@ -648,17 +652,24 @@ int main(int argc, const char *argv[]){
     std::vector<std::string> dataset_names = {
         //"tt_auditorium",
         //"tt_ballroom",
-        //"tt_temple"
-        //"mip-flower",
-        //"mip-treehill"
-        "chair",
-        "drum",
-        "ficus",
-        "hotdog",
-        "lego",
-        "materials",
-        "mic",
-        "ship"
+        //"tt_temple",
+        "mip-flower",
+        "mip-treehill",
+        "mip-bicycle",
+        "mip-bonsai",
+        "mip-counter",
+        "mip-garden",
+        "mip-kitchen",
+        "mip-room",
+        "mip-stump"
+        //"chair",
+        //"drum",
+        //"ficus",
+        //"hotdog",
+        //"lego",
+        //"materials",
+        //"mic"
+        //"ship"
     };
 
     for(const auto &name : dataset_names){

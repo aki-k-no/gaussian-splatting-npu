@@ -47,8 +47,8 @@ struct CameraInfo {
     std::vector<double> params;
 };
 
-std::map<uint32_t, Image> read_extrinsics_binary(const std::string& path){
-    std::map<uint32_t, Image> images;
+std::map<std::string, Image> read_extrinsics_binary(const std::string& path){
+    std::map<std::string, Image> images;
 
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) {
@@ -94,7 +94,8 @@ std::map<uint32_t, Image> read_extrinsics_binary(const std::string& path){
             img.xys.emplace_back(x, y);
             img.point3D_ids.push_back(pid);
         }
-        images[img.id] = std::move(img);
+        images[img.name] = std::move(img);
+
     }
 
     return images;
@@ -144,7 +145,7 @@ std::unordered_map<uint32_t, CameraInfo> read_intrinsics_binary(const std::strin
 }
 
 void readColmapCameras(
-    const std::map<uint32_t, Image>& cam_extrinsics,
+    const std::map<std::string, Image>& cam_extrinsics,
     const std::unordered_map<uint32_t, CameraInfo>& cam_intrinsics,
     std::vector<Camera> &cam_infos)
 {
@@ -157,6 +158,7 @@ void readColmapCameras(
         std::cout << "\rReading camera " << ++idx << "/" << cam_extrinsics.size() << std::flush;
 
         const auto& intr = cam_intrinsics.at(extr.camera_id);
+        
 
         Camera cam;
         cam.R = qvec2rotmat(extr.qvec);
